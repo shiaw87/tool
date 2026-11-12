@@ -212,15 +212,39 @@ tool({ id: 'organize', group: '頁面', title: '合併、分割與組織', desc:
   const optStrip = chk('strip', '移除元數據（metadata）');
   const queue = []; let busy = false;
   const pump = async () => { if (busy) return; busy = true; while (queue.length) { const p = queue.shift(); if (!pages.includes(p) || p.thumb) continue; try { p.thumb = await renderCanvas(files.get(p.file).pj, p.idx + 1, { width: 220 }); const slot = $(`[data-id="${p.id}"] .th`, grid); if (slot) { p.thumb.style.transform = `rotate(${p.rot}deg)`; slot.replaceChildren(p.thumb); } } catch (e) { console.warn(e); } } busy = false; };
-  let dragId = null;
+  let dragId = null, dragFile = null;
+  // 檔案順序：依各檔第一頁出現的位置；空白頁跟著前一頁所屬的檔案移動
+  const fileBar = h('ul', { class: 'files filebar', 'aria-label': '檔案順序' });
+  const fileIds = () => [...new Set(pages.filter(p => !p.blank).map(p => p.file))];
+  const applyFileOrder = ids => { const g = new Map(); let cur = ids[0]; for (const p of pages) { if (!p.blank) cur = p.file; g.set(p, cur); } pages = ids.flatMap(id => pages.filter(p => g.get(p) === id)); draw(); };
+  const moveFile = (id, to) => { const ids = fileIds(), from = ids.indexOf(id); if (from < 0 || to < 0 || to >= ids.length || from === to) return draw(); ids.splice(from, 1); ids.splice(to, 0, id); applyFileOrder(ids); };
+  const drawFiles = () => {
+    const ids = fileIds();
+    fileBar.replaceChildren(...ids.map((id, i) => {
+      const f = files.get(id), n = pages.filter(p => p.file === id).length;
+      const li = h('li', { draggable: 'true', 'data-file': id,
+        ondragstart: e => { dragFile = id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id); },
+        ondragend: () => { dragFile = null; },
+        ondragover: e => { if (dragFile && dragFile !== id) { e.preventDefault(); li.classList.add('dragover'); } }, ondragleave: () => li.classList.remove('dragover'),
+        ondrop: e => { if (!dragFile) return; e.preventDefault(); e.stopPropagation(); const src = dragFile; dragFile = null; moveFile(src, i); } },
+        h('span', { class: 'grip', 'aria-hidden': 'true' }, '⠿'), h('span', { class: 'num' }, i + 1), h('span', { class: 'nm' }, f.name), h('span', { class: 'sz' }, `${n} 頁`),
+        h('button', { class: 'btn sm', disabled: i === 0, 'aria-label': `把 ${f.name} 往前移`, title: '往前移', onclick: () => moveFile(id, i - 1) }, '↑'),
+        h('button', { class: 'btn sm', disabled: i === ids.length - 1, 'aria-label': `把 ${f.name} 往後移`, title: '往後移', onclick: () => moveFile(id, i + 1) }, '↓'),
+        h('button', { class: 'btn sm', 'aria-label': '移除 ' + f.name, onclick: () => { pages = pages.filter(p => p.file !== id); files.delete(id); draw(); } }, '移除'));
+      return li;
+    }));
+    fileHint.hidden = ids.length < 2;
+  };
+  const fileHint = h('p', { class: 'hint', hidden: true }, '拖曳檔案列可調整 PDF 的先後順序，該檔的所有頁面會一起移動。');
   const draw = () => {
+    drawFiles();
     grid.replaceChildren(...pages.map((p, i) => {
       const th = h('div', { class: 'th' }, p.blank ? h('div', { class: 'blank' }) : (p.thumb || h('span', { class: 'hint' }, '載入中')));
       if (p.thumb) p.thumb.style.transform = `rotate(${p.rot}deg)`;
       const act = (lab, sym, fn) => h('button', { title: lab, 'aria-label': lab, onclick: e => { e.stopPropagation(); fn(); draw(); } }, sym);
-      const card = h('div', { class: 'pg' + (p.sel ? ' sel' : ''), 'data-id': p.id, draggable: true, tabindex: 0, role: 'checkbox', 'aria-checked': !!p.sel, 'aria-label': `第 ${i + 1} 頁`,
+      const card = h('div', { class: 'pg' + (p.sel ? ' sel' : ''), 'data-id': p.id, draggable: 'true', tabindex: 0, role: 'checkbox', 'aria-checked': !!p.sel, 'aria-label': `第 ${i + 1} 頁`,
         onclick: () => { p.sel = !p.sel; draw(); }, onkeydown: e => { if (e.key === ' ') { e.preventDefault(); p.sel = !p.sel; draw(); } },
-        ondragstart: e => { dragId = p.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', p.id); },
+        ondragstart: e => { dragId = p.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', p.id); }, ondragend: () => { dragId = null; },
         ondragover: e => { if (dragId) { e.preventDefault(); card.classList.add('dragover'); } }, ondragleave: () => card.classList.remove('dragover'),
         ondrop: e => { if (!dragId) return; e.preventDefault(); e.stopPropagation(); const from = pages.findIndex(x => x.id === dragId), to = pages.indexOf(p); dragId = null; if (from < 0 || from === to) return draw(); const [m] = pages.splice(from, 1); pages.splice(to, 0, m); draw(); } },
         th, h('div', { class: 'cap' }, h('span', {}, p.blank ? '空白頁' : files.get(p.file).name), h('span', { class: 'num' }, i + 1)),
@@ -267,7 +291,7 @@ tool({ id: 'organize', group: '頁面', title: '合併、分割與組織', desc:
   const zone = dropzone('加入 PDF、JPG 或 PNG', '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png', add);
   attachDrop(grid, add);
   sec.append(h('div', { class: 'cols' },
-    h('div', {}, zone,
+    h('div', {}, zone, fileBar, fileHint,
       h('div', { class: 'toolbar' },
         h('button', { class: 'btn sm', onclick: () => { const all = pages.every(p => p.sel); pages.forEach(p => p.sel = !all); draw(); } }, '全選／取消'),
         h('button', { class: 'btn sm', onclick: bulk(l => l.forEach(p => p.rot = (p.rot + 270) % 360)) }, '↺ 旋轉已選'),
