@@ -25,10 +25,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404); return None
         return super().send_head()
 
-class DualStack(http.server.ThreadingHTTPServer):
+class V6Only(http.server.ThreadingHTTPServer):
     address_family = socket.AF_INET6
     def server_bind(self):
-        try: self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)   # 同時接受 IPv4 與 IPv6
+        try: self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
         except OSError: pass
         super().server_bind()
 
@@ -39,9 +39,15 @@ if __name__ == "__main__":
     a = ap.parse_args()
     handler = functools.partial(Handler, directory=ROOT)
     if a.lan:
-        try: srv = DualStack(("::", a.port), handler)
-        except OSError: srv = http.server.ThreadingHTTPServer(("0.0.0.0", a.port), handler)   # 這台電腦沒有 IPv6
-        print(f"頁匠工具箱：http://localhost:{a.port}  （其他裝置請用這台電腦的 IP，IPv6 寫成 http://[位址]:{a.port}）")
+        # IPv4 與 IPv6 各開一個監聽，不依賴作業系統的雙協定設定
+        srv = http.server.ThreadingHTTPServer(("0.0.0.0", a.port), handler)
+        try:
+            import threading
+            threading.Thread(target=V6Only(("::", a.port), handler).serve_forever, daemon=True).start()
+            v6 = "IPv4 與 IPv6"
+        except OSError:
+            v6 = "僅 IPv4"
+        print(f"正在監聽所有網路介面（{v6}），連接埠 {a.port}")
     else:
         srv = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), handler)
         print(f"頁匠工具箱：http://localhost:{a.port}  （只有這台電腦能連）")
