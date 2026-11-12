@@ -1,0 +1,11 @@
+# 對外公開用。把下面的 tool.example.com 換成你的網域（DNS 的 AAAA 記錄指向這台電腦的 IPv6）。
+# Caddy 會自動申請並續期 HTTPS 憑證，需要對外開放 80 與 443 連接埠。
+# 啟動：在這個資料夾執行  caddy run
+tool.example.com {
+	root * .
+	encode zstd gzip
+	@hidden path */.* /serve.py /start.bat /start.sh /Caddyfile /README.md
+	respond @hidden 404
+	header X-Content-Type-Options nosniff
+	file_server
+}
