@@ -165,7 +165,7 @@ async function loadImageFile(f, removeBg = false) {
 const TOOLS = [];
 function tool(def) { TOOLS.push(def); }
 function mount() {
-  const nav = $('#nav'), main = $('#main'); let grp = ''; const order = ['頁面', '檔案', '編輯與保護', '圖片']; TOOLS.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));
+  const nav = $('#nav'), main = $('#main'); let grp = ''; const order = ['頁面', '檔案', '圖片']; TOOLS.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));
   for (const t of TOOLS) {
     if (t.group !== grp) { grp = t.group; nav.append(h('div', { class: 'grp' }, grp)); }
     nav.append(h('button', { 'data-t': t.id, onclick: () => go(t.id) }, t.title));
@@ -401,7 +401,7 @@ function anchor(pos, vw, vh, w, hh, m) {
   return pos === 'c' ? [vw / 2, vh / 2] : [x, y];
 }
 let wmImage = null;
-batchTool({ id: 'watermark', group: '編輯與保護', title: '浮水印', desc: '在每一頁加上文字或圖片浮水印，可調整大小、顏色、透明度、角度與位置。', action: '套用浮水印', zipName: 'watermarked-pdfs.zip',
+batchTool({ id: 'watermark', group: '頁面', title: '浮水印', desc: '在每一頁加上文字或圖片浮水印，可調整大小、顏色、透明度、角度與位置。', action: '套用浮水印', zipName: 'watermarked-pdfs.zip',
   options(o) {
     const txt = h('div', {}, field('浮水印文字', inp('text', 'text', '機密文件')), h('div', { class: 'two' }, field('文字大小', inp('size', 'number', 54, { min: 6, max: 400 })), field('字母間距', inp('spacing', 'number', 2, { min: 0, max: 60 }))), field('顏色', colorField('color', '#b3261e')));
     const prev = h('img', { class: 'sigprev', alt: '浮水印圖片預覽', hidden: true });
@@ -431,7 +431,7 @@ batchTool({ id: 'watermark', group: '編輯與保護', title: '浮水印', desc:
 
 /* ═════════ 6. 頁碼 ═════════ */
 const PN_FMT = { n: i => `${i}`, page: i => `Page ${i}`, zht: i => `第${i}頁`, zhs: i => `第${i}页`, ja: i => `${i}ページ`, ko: i => `${i}페이지`, of: (i, n) => `${i} / ${n}` };
-batchTool({ id: 'pagenum', group: '編輯與保護', title: '新增頁碼', desc: '為每一頁加上頁碼，可選擇樣式、位置與起始號碼。', action: '加入頁碼', zipName: 'numbered-pdfs.zip',
+batchTool({ id: 'pagenum', group: '頁面', title: '新增頁碼', desc: '為每一頁加上頁碼，可選擇樣式、位置與起始號碼。', action: '加入頁碼', zipName: 'numbered-pdfs.zip',
   options(o) {
     o.append(field('頁碼樣式', sel('fmt', [['n', '1, 2, 3'], ['page', 'Page 1, Page 2, Page 3'], ['zht', '第1頁, 第2頁, 第3頁'], ['zhs', '第1页, 第2页, 第3页'], ['ja', '1ページ, 2ページ, 3ページ'], ['ko', '1페이지, 2페이지, 3페이지'], ['of', '1 / 總頁數']])),
       field('頁碼位置', sel('pos', [['bc', '下方置中'], ['bl', '左下'], ['br', '右下'], ['tc', '上方置中'], ['tl', '左上'], ['tr', '右上']])),
@@ -448,254 +448,7 @@ batchTool({ id: 'pagenum', group: '編輯與保護', title: '新增頁碼', desc
     return [{ name: stem(f.name) + '-numbered.pdf', bytes: await doc.save() }];
   } });
 
-/* ═════════ 互動預覽舞台（簽名、編輯、標記密文共用） ═════════ */
-class Stage {
-  constructor({ onSelect } = {}) {
-    this.objs = []; this.page = 1; this.n = 0; this.sel = null; this.onSelect = onSelect || (() => {}); this.drawCb = null;
-    this.canvasHost = h('div'); this.ov = h('div', { class: 'ov' }); this.el = h('div', { class: 'stage', hidden: true }, this.canvasHost, this.ov);
-    this.label = h('span', { class: 'num' });
-    this.pager = h('div', { class: 'pager', hidden: true }, h('button', { class: 'btn sm', onclick: () => this.go(this.page - 1) }, '上一頁'), this.label, h('button', { class: 'btn sm', onclick: () => this.go(this.page + 1) }, '下一頁'));
-    this.wrap = h('div', {}, h('div', { class: 'stagewrap' }, this.el, h('p', { class: 'hint', style: 'text-align:center' }, '加入 PDF 後會在這裡顯示頁面預覽。')), this.pager);
-    this.ov.addEventListener('pointerdown', e => this.down(e));
-  }
-  async load(f) { this.file = f; this.pj = await openPdfjs(f.bytes); this.n = this.pj.numPages; this.objs = []; this.sel = null; this.page = 1; this.el.hidden = false; this.pager.hidden = false; $('.hint', this.wrap).hidden = true; await this.show(); }
-  async go(p) { if (!this.pj || p < 1 || p > this.n) return; this.page = p; this.sel = null; this.onSelect(null); await this.show(); }
-  async size(p) { const pg = await this.pj.getPage(p), v = pg.getViewport({ scale: 1 }); return [v.width, v.height]; }
-  async show() {
-    const [vw, vh] = await this.size(this.page); this.vw = vw; this.vh = vh;
-    const avail = Math.max(240, (this.wrap.clientWidth || 700) - 28); this.scale = Math.min(1.5, avail / vw);
-    const c = await renderCanvas(this.pj, this.page, { scale: this.scale * Math.min(2, window.devicePixelRatio || 1) });
-    this.el.style.width = vw * this.scale + 'px'; this.el.style.height = vh * this.scale + 'px'; this.canvasHost.replaceChildren(c);
-    this.label.textContent = `第 ${this.page} / ${this.n} 頁`; this.draw();
-  }
-  add(o) { o.id = uid(); o.page = o.page || this.page; this.objs.push(o); this.sel = o.id; this.draw(); this.onSelect(o); return o; }
-  remove(id) { this.objs = this.objs.filter(o => o.id !== id); if (this.sel === id) { this.sel = null; this.onSelect(null); } this.draw(); }
-  get selected() { return this.objs.find(o => o.id === this.sel) || null; }
-  draw() {
-    const s = this.scale; this.ov.replaceChildren(...this.objs.filter(o => o.page === this.page).map(o => {
-      const d = h('div', { class: 'ob' + (o.id === this.sel ? ' sel' : ''), 'data-id': o.id, style: `left:${o.x * s}px;top:${o.y * s}px;width:${o.w * s}px;height:${o.h * s}px;${o.fill ? `background:${o.fill};opacity:${o.alpha ?? 1};` : ''}` },
-        o.url ? h('img', { src: o.url, alt: '' }) : null, o.inner ? h('img', { src: o.inner.url, alt: '', style: 'width:auto;max-width:100%;object-fit:contain;object-position:left' }) : null, h('span', { class: 'x', 'data-act': 'del', title: '移除' }, '×'), h('span', { class: 'rz', 'data-act': 'rz' }));
-      return d;
-    }));
-  }
-  startDraw(cb) { this.drawCb = cb; this.ov.classList.add('draw'); }
-  stopDraw() { this.drawCb = null; this.ov.classList.remove('draw'); }
-  down(e) {
-    const rect = this.ov.getBoundingClientRect(), s = this.scale, px = (e.clientX - rect.left) / s, py = (e.clientY - rect.top) / s;
-    const box = e.target.closest('.ob'), act = e.target.dataset.act;
-    if (box && act === 'del') return this.remove(box.dataset.id);
-    const track = (move, up) => { const mv = ev => { move((ev.clientX - rect.left) / s, (ev.clientY - rect.top) / s); }; const end = ev => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', end); up && up(); }; window.addEventListener('pointermove', mv); window.addEventListener('pointerup', end); };
-    if (box && !this.drawCb) {
-      const o = this.objs.find(x => x.id === box.dataset.id); this.sel = o.id; this.onSelect(o); this.draw(); e.preventDefault();
-      const ox = px - o.x, oy = py - o.y, w0 = o.w, h0 = o.h;
-      if (act === 'rz') track((x, y) => { o.w = Math.max(6, x - o.x); o.h = o.lock ? o.w * h0 / w0 : Math.max(6, y - o.y); this.draw(); });
-      else track((x, y) => { o.x = Math.min(this.vw - 4, Math.max(4 - o.w, x - ox)); o.y = Math.min(this.vh - 4, Math.max(4 - o.h, y - oy)); this.draw(); });
-      return;
-    }
-    if (this.drawCb) {
-      e.preventDefault(); const ghost = h('div', { class: 'ob sel' }); this.ov.append(ghost); let r = null;
-      track((x, y) => { r = { x: Math.min(px, x), y: Math.min(py, y), w: Math.abs(x - px), h: Math.abs(y - py) }; ghost.style.cssText = `left:${r.x * s}px;top:${r.y * s}px;width:${r.w * s}px;height:${r.h * s}px`; },
-        () => { ghost.remove(); if (r && r.w > 3 && r.h > 3) this.drawCb({ ...r, page: this.page }); });
-      return;
-    }
-    this.sel = null; this.onSelect(null); this.draw();
-  }
-}
-// 把舞台上的物件畫進 PDF
-async function applyObjects(doc, objs) {
-  const pages = doc.getPages(), cache = new Map();
-  const png = async bytes => { if (!cache.has(bytes)) cache.set(bytes, await doc.embedPng(bytes)); return cache.get(bytes); };
-  for (const o of objs) {
-    const p = pages[o.page - 1], box = { cx: o.x + o.w / 2, cy: o.y + o.h / 2, w: o.w, h: o.h };
-    if (o.fill) placeRect(p, { ...box, color: hexRgb(o.fill), opacity: o.alpha ?? 1 });
-    if (o.bytes) placeImage(p, await png(o.bytes), box);
-    if (o.inner) { const k = Math.min(1, (o.w - 4) / o.inner.w, o.h / o.inner.h), w = o.inner.w * k, hh = o.inner.h * k; placeImage(p, await png(o.inner.bytes), { cx: o.x + 2 + w / 2, cy: o.y + o.h / 2, w, h: hh }); }
-  }
-}
-// 把指定頁面轉成影像頁（原頁內容不保留在輸出檔中）
-async function rasterizePages(bytes, idxSet, scale = 2.2) {
-  const pj = await openPdfjs(bytes), src = await openLib(bytes), out = await PDFDocument.create(), n = src.getPageCount();
-  const keep = [...Array(n).keys()].filter(i => !idxSet.has(i)), copied = await out.copyPages(src, keep), byIdx = new Map(keep.map((k, j) => [k, copied[j]]));
-  for (let i = 0; i < n; i++) {
-    if (byIdx.has(i)) { out.addPage(byIdx.get(i)); continue; }
-    const c = await renderCanvas(pj, i + 1, { scale }), img = await out.embedJpg(await canvasBytes(c, 'image/jpeg', .92)), w = c.width / scale, hh = c.height / scale;
-    out.addPage([w, hh]).drawImage(img, { x: 0, y: 0, width: w, height: hh });
-  }
-  return out.save();
-}
-function stageTool({ id, group, title, desc, side, exportName, exportLabel, build: buildOut }) {
-  tool({ id, group, title, desc, build(sec) {
-    const status = h('div', { class: 'status', role: 'status' }), results = h('ul', { class: 'results' }), panel = h('div', {});
-    const st = new Stage({ onSelect: o => api.onSelect && api.onSelect(o) });
-    const api = { st, status, need() { if (!st.pj) throw new Error('請先加入 PDF 檔案。'); } };
-    const load = async fs => { const f = fs.find(isPdf); if (!f) return setStatus(status, 'err', '請加入 PDF 檔案。'); try { await st.load(f); api.onLoad && await api.onLoad(f); setStatus(status, 'ok', `已開啟 ${f.name}（${st.n} 頁）`); } catch (e) { setStatus(status, 'err', e.message); } };
-    side(panel, api);
-    const btn = h('button', { class: 'btn pri', onclick: async () => { try { api.need(); btn.disabled = true; setStatus(status, 'busy', '處理中…'); const bytes = await buildOut(api); showResults(results, [{ name: stem(st.file.name) + exportName, bytes }], '', status); setStatus(status, 'ok', '已完成，可下載輸出檔。'); } catch (e) { console.error(e); setStatus(status, 'err', e.message); } btn.disabled = false; } }, exportLabel);
-    sec.append(h('div', { class: 'cols' }, h('div', {}, dropzone('加入 PDF', '.pdf,application/pdf', load, false), h('div', { style: 'height:12px' }), st.wrap),
-      h('div', { class: 'side' }, h('div', { class: 'panel' }, panel, btn, status), h('div', { class: 'panel' }, h('h2', {}, '輸出'), results))));
-    window.addEventListener('toolshown', e => { if (e.detail === id && st.pj) st.show(); });
-  } });
-}
-
-/* ═════════ 7. 電子簽名 ═════════ */
-stageTool({ id: 'sign', group: '編輯與保護', title: '電子簽名', desc: '用輸入、手寫或圖片建立簽名，放到頁面上拖曳調整位置與大小。這是視覺簽名，不含憑證數位簽章。', exportName: '-signed.pdf', exportLabel: '加入簽名並輸出',
-  side(p, api) {
-    let sig = null; const prev = h('img', { class: 'sigprev', alt: '簽名預覽', hidden: true });
-    const setSig = s => { sig = s; prev.src = s.url; prev.hidden = false; };
-    const typed = h('div', {}, field('簽名文字', inp('sigtext', 'text', '')), field('字體', sel('sigfont', [['kai', '楷體'], ['serif', '明體'], ['sans', '黑體']])), h('button', { class: 'btn sm', onclick: async () => { const t = val(p, 'sigtext').trim(); if (!t) return setStatus(api.status, 'err', '請先輸入文字。'); const r = await textToPng(t, { size: 40, family: val(p, 'sigfont'), color: val(p, 'sigcolor') }); setSig({ bytes: r.bytes, url: r.url, pw: r.w, ph: r.h }); } }, '使用簽名'));
-    const pad = h('canvas', { class: 'pad', width: 560, height: 280, 'aria-label': '手寫簽名板' }), pc = pad.getContext('2d'); let drawing = false, dirty = false;
-    const pt = e => { const r = pad.getBoundingClientRect(); return [(e.clientX - r.left) * pad.width / r.width, (e.clientY - r.top) * pad.height / r.height]; };
-    pad.addEventListener('pointerdown', e => { drawing = true; dirty = true; pad.setPointerCapture(e.pointerId); pc.lineWidth = 4; pc.lineCap = pc.lineJoin = 'round'; pc.strokeStyle = val(p, 'sigcolor'); pc.beginPath(); pc.moveTo(...pt(e)); });
-    pad.addEventListener('pointermove', e => { if (drawing) { pc.lineTo(...pt(e)); pc.stroke(); } });
-    pad.addEventListener('pointerup', () => drawing = false);
-    const drawn = h('div', { hidden: true }, pad, h('div', { class: 'row', style: 'margin-top:6px' }, h('button', { class: 'btn sm', onclick: () => { pc.clearRect(0, 0, pad.width, pad.height); dirty = false; } }, '清除簽名'),
-      h('button', { class: 'btn sm', onclick: async () => { if (!dirty) return setStatus(api.status, 'err', '請先在簽名板上簽名。'); const d = pc.getImageData(0, 0, pad.width, pad.height).data; let x0 = pad.width, y0 = pad.height, x1 = 0, y1 = 0; for (let y = 0; y < pad.height; y++) for (let x = 0; x < pad.width; x++) if (d[(y * pad.width + x) * 4 + 3] > 8) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); } if (x1 <= x0) return; const c = h('canvas'); c.width = x1 - x0 + 12; c.height = y1 - y0 + 12; c.getContext('2d').drawImage(pad, x0 - 6, y0 - 6, c.width, c.height, 0, 0, c.width, c.height); setSig({ bytes: await canvasBytes(c), url: c.toDataURL(), pw: c.width, ph: c.height }); } }, '使用簽名')));
-    const image = h('div', { hidden: true }, field('簽名圖片', h('input', { type: 'file', accept: 'image/png,image/jpeg', id: uid(), onchange: async e => { const [f] = await readFiles(e.target.files); if (f) setSig(await loadImageFile(f, val(p, 'sigbg'))); } })), chk('sigbg', '自動去除圖片背景', true));
-    const src = sel('sigsrc', [['typed', '輸入簽名'], ['draw', '手寫簽名'], ['image', '圖片簽名']]); src.onchange = () => { typed.hidden = src.value !== 'typed'; drawn.hidden = src.value !== 'draw'; image.hidden = src.value !== 'image'; };
-    p.append(h('h2', {}, '簽名'), field('簽名來源', src), field('顏色', colorField('sigcolor', '#14213d')), typed, drawn, image, prev,
-      h('button', { class: 'btn', style: 'margin-bottom:10px', onclick: () => { try { api.need(); if (!sig) throw new Error('請先建立簽名，再按「使用簽名」。'); const w = Math.min(180, api.st.vw * .35), hh = w * sig.ph / sig.pw; api.st.add({ x: (api.st.vw - w) / 2, y: api.st.vh * .7, w, h: hh, url: sig.url, bytes: sig.bytes, lock: true }); } catch (e) { setStatus(api.status, 'err', e.message); } } }, '放到目前頁面'),
-      h('p', { class: 'hint' }, '放上頁面後可拖曳移動，拉右下角調整大小。可在多頁重複放置。'));
-  },
-  async build({ st }) { if (!st.objs.length) throw new Error('請先把簽名放到頁面上。'); const doc = await openLib(st.file.bytes); await applyObjects(doc, st.objs); return doc.save(); } });
-
-/* ═════════ 8. 編輯 PDF ═════════ */
-stageTool({ id: 'edit', group: '編輯與保護', title: '編輯 PDF', desc: '在頁面上加入文字、圖片、醒目標記，或用色塊覆蓋後填入替換文字。', exportName: '-edited.pdf', exportLabel: '套用編輯並輸出',
-  side(p, api) {
-    const st = api.st, B = (name, label) => { const b = h('button', { class: 'btn sm', type: 'button', 'data-k': name, 'aria-pressed': 'false', onclick: () => { b.classList.toggle('on'); b.setAttribute('aria-pressed', b.classList.contains('on')); sync(); } }, label); return b; };
-    const props = () => ({ text: val(p, 'etext'), size: +val(p, 'esize') || 14, color: val(p, 'ecolor'), family: val(p, 'efont'), align: val(p, 'ealign'), bold: $('[data-k=bold]', p).classList.contains('on'), italic: $('[data-k=italic]', p).classList.contains('on'), underline: $('[data-k=underline]', p).classList.contains('on'), strike: $('[data-k=strike]', p).classList.contains('on') });
-    const renderText = async (o, pr) => { const r = await textToPng(pr.text, pr); const k = o.w && o.tw ? o.w / o.tw : 1; Object.assign(o, { props: pr, bytes: r.bytes, url: r.url, tw: r.w, w: r.w * k, h: r.h * k, lock: true, kind: 'text' }); };
-    let t = 0; const sync = () => { clearTimeout(t); t = setTimeout(async () => { const o = st.selected; if (!o) return; if (o.kind === 'text' && val(p, 'etext').trim()) { await renderText(o, props()); st.draw(); } if (o.kind === 'cover') { await setCover(o); st.draw(); } }, 180); };
-    const setCover = async o => { const t = val(p, 'ctext').trim(); o.fill = val(p, 'cfill'); o.ctext = t; if (t) { const r = await textToPng(t, { size: Math.max(6, o.h * .62), color: val(p, 'ecolor'), family: val(p, 'efont') }); o.inner = { bytes: r.bytes, w: r.w, h: r.h, url: r.url }; o.url = null; } else o.inner = null; };
-    const guard = fn => async () => { try { api.need(); await fn(); } catch (e) { setStatus(api.status, 'err', e.message); } };
-    const drawBtn = (label, make) => { const b = h('button', { class: 'btn sm', onclick: guard(() => { $$('.btn.on[data-draw]', p).forEach(x => x.classList.remove('on')); b.classList.add('on'); setStatus(api.status, 'busy', '在頁面上拖曳畫出範圍'); st.startDraw(async r => { st.stopDraw(); b.classList.remove('on'); const o = await make(r); st.add(o); setStatus(api.status, 'ok', '已加入，可拖曳調整。'); }); }) }, label); b.dataset.draw = 1; return b; };
-    const layers = h('ul', { class: 'results layers' });
-    const names = { text: '文字', image: '圖片', hl: '醒目標記', cover: '覆蓋替換' };
-    const drawLayers = () => layers.replaceChildren(...st.objs.map(o => h('li', {}, h('span', { class: 'nm' }, `第 ${o.page} 頁 · ${names[o.kind]}${o.kind === 'text' ? '：' + o.props.text.slice(0, 12) : ''}`), h('button', { class: 'btn sm', onclick: () => st.remove(o.id) }, '刪除'))));
-    const origDraw = st.draw.bind(st); st.draw = () => { origDraw(); drawLayers(); };
-    api.onSelect = o => { if (o && o.kind === 'text') { const pr = o.props; $('[name=etext]', p).value = pr.text; $('[name=esize]', p).value = pr.size; $('[name=ecolor]', p).value = pr.color; $('[name=efont]', p).value = pr.family; $('[name=ealign]', p).value = pr.align; for (const k of ['bold', 'italic', 'underline', 'strike']) $(`[data-k=${k}]`, p).classList.toggle('on', pr[k]); } if (o && o.kind === 'cover') { $('[name=ctext]', p).value = o.ctext || ''; $('[name=cfill]', p).value = o.fill; } };
-    p.append(h('h2', {}, '加入文字'), field('文字內容', h('textarea', { name: 'etext', id: uid() }, '')),
-      h('div', { class: 'two' }, field('文字大小', inp('esize', 'number', 14, { min: 4, max: 200 })), field('字體', sel('efont', [['sans', '黑體'], ['serif', '明體'], ['kai', '楷體'], ['mono', '等寬']]))),
-      h('div', { class: 'row', style: 'margin-bottom:10px' }, B('bold', '粗體'), B('italic', '斜體'), B('underline', '底線'), B('strike', '刪除線'), sel('ealign', [['left', '靠左'], ['center', '置中'], ['right', '靠右']])),
-      field('文字顏色', colorField('ecolor', '#000000')),
-      h('div', { class: 'row', style: 'margin-bottom:14px' },
-        h('button', { class: 'btn', onclick: guard(async () => { const pr = props(); if (!pr.text.trim()) throw new Error('請先輸入文字。'); const o = { x: 40, y: 60 }; await renderText(o, pr); o.x = (st.vw - o.w) / 2; o.y = st.vh * .3; st.add(o); }) }, '新增文字'),
-        h('label', { class: 'btn' }, '新增圖片', h('input', { type: 'file', accept: 'image/png,image/jpeg', hidden: true, id: uid(), onchange: guard(async function () { const input = $('input[type=file][hidden]', p); const [f] = await readFiles(input.files); input.value = ''; if (!f) return; const im = await loadImageFile(f), w = Math.min(st.vw * .4, im.pw * .75); st.add({ kind: 'image', x: (st.vw - w) / 2, y: st.vh * .35, w, h: w * im.ph / im.pw, bytes: im.bytes, url: im.url, lock: true }); }) }))),
-      h('h2', {}, '標記與覆蓋'),
-      h('div', { class: 'row' }, drawBtn('醒目標記', async r => ({ ...r, kind: 'hl', fill: '#ffe24a', alpha: .4 })), drawBtn('覆蓋替換', async r => { const o = { ...r, kind: 'cover' }; await setCover(o); return o; })),
-      h('div', { class: 'two', style: 'margin-top:10px' }, field('替換文字', inp('ctext', 'text', '')), field('覆蓋顏色', inp('cfill', 'color', '#ffffff', { style: 'height:32px;padding:2px' }))),
-      h('p', { class: 'warnbox' }, '覆蓋替換適合非敏感的視覺修正；底層原文字可能仍存在。敏感資訊請使用「標記密文」。'),
-      field('輸出模式', sel('emode', [['overlay', '視覺覆蓋（保留可選取文字）'], ['flatten', '扁平化編輯頁（編輯過的頁面轉為影像）']])),
-      h('h2', {}, '物件圖層'), layers, h('div', { style: 'height:10px' }));
-    p.addEventListener('input', sync);
-  },
-  async build({ st }) {
-    if (!st.objs.length) throw new Error('請先在頁面上加入內容。');
-    const doc = await openLib(st.file.bytes); await applyObjects(doc, st.objs); const bytes = await doc.save();
-    return $('[name=emode]').value === 'flatten' ? rasterizePages(bytes, new Set(st.objs.map(o => o.page - 1))) : bytes;
-  } });
-
-/* ═════════ 9. 標記密文 ═════════ */
-stageTool({ id: 'redact', group: '編輯與保護', title: '標記密文', desc: '搜尋文字或拖曳框選要遮蔽的範圍。輸出時，含標記的頁面會轉成影像，被遮蔽的文字不會留在檔案裡。', exportName: '-redacted.pdf', exportLabel: '標記密文並輸出',
-  side(p, api) {
-    const st = api.st, info = h('p', { class: 'hint' }, '尚未加入標記。');
-    const origDraw = st.draw.bind(st); st.draw = () => { origDraw(); const n = st.objs.length, pg = new Set(st.objs.map(o => o.page)).size; info.textContent = n ? `共 ${n} 個標記，分布在 ${pg} 頁。` : '尚未加入標記。'; };
-    const mark = r => ({ ...r, fill: '#000000', alpha: .85 });
-    const b = h('button', { class: 'btn', onclick: () => { try { api.need(); } catch (e) { return setStatus(api.status, 'err', e.message); } if (st.drawCb) { st.stopDraw(); b.classList.remove('on'); return; } b.classList.add('on'); setStatus(api.status, 'busy', '拖曳以插入密文標記；再按一次結束。'); st.startDraw(r => st.add(mark(r))); } }, '拖曳標記密文');
-    const search = async () => {
-      api.need(); const q = val(p, 'rq'); if (!q.trim()) throw new Error('請先輸入要標記的文字。'); const cs = val(p, 'rcase'), needle = cs ? q : q.toLowerCase(); let n = 0;
-      for (let i = 1; i <= st.n; i++) {
-        const page = await st.pj.getPage(i), vp = page.getViewport({ scale: 1 }), tc = await page.getTextContent();
-        for (const it of tc.items) {
-          if (!it.str) continue; const hay = cs ? it.str : it.str.toLowerCase(); let from = 0, at;
-          while ((at = hay.indexOf(needle, from)) >= 0) {
-            from = at + needle.length; const m = pdfjsLib.Util.transform(vp.transform, it.transform), fh = Math.hypot(m[2], m[3]) || it.height, len = it.str.length;
-            const x = m[4] + it.width * at / len, w = it.width * needle.length / len;
-            st.objs.push({ id: uid(), page: i, ...mark({ x: x - 1.5, y: m[5] - fh * .95, w: w + 3, h: fh * 1.25 }) }); n++;
-          }
-        }
-      }
-      st.draw(); setStatus(api.status, n ? 'ok' : 'err', n ? `已標記 ${n} 處「${q}」。` : '找不到符合的文字。');
-    };
-    p.append(h('h2', {}, '搜尋文字'), field('要標記的文字', inp('rq', 'text', '', { placeholder: '輸入關鍵字' })), chk('rcase', '區分大小寫'),
-      h('div', { class: 'row', style: 'margin-bottom:12px' }, h('button', { class: 'btn', onclick: async () => { try { await search(); } catch (e) { setStatus(api.status, 'err', e.message); } } }, '標記全部符合處'), b),
-      h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: () => { st.objs = []; st.sel = null; st.draw(); } }, '清除全部標記')), info,
-      h('p', { class: 'warnbox' }, '掃描檔或圖片內的文字無法搜尋，請用拖曳框選。輸出前請逐頁確認標記範圍。'));
-  },
-  async build({ st }) {
-    if (!st.objs.length) throw new Error('請先在預覽或搜尋中標記至少一個密文範圍。');
-    const doc = await openLib(st.file.bytes); await applyObjects(doc, st.objs.map(o => ({ ...o, alpha: 1 })));
-    return rasterizePages(await doc.save(), new Set(st.objs.map(o => o.page - 1)));
-  } });
-
-/* ═════════ 10. PDF 加密（AES-256，PDF 2.0 標準安全處理器 R6） ═════════ */
-const enc = new TextEncoder();
-const sha = async (alg, d) => new Uint8Array(await crypto.subtle.digest(alg, d));
-async function aesCbc(key, iv, data, pad) { const k = await crypto.subtle.importKey('raw', key, 'AES-CBC', false, ['encrypt']); const o = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv }, k, data)); return pad ? o : o.slice(0, data.length); }
-async function hashR6(pw, salt, udata = new Uint8Array(0)) {
-  let K = await sha('SHA-256', concat(pw, salt, udata));
-  for (let round = 1; ; round++) {
-    const one = concat(pw, K, udata), K1 = new Uint8Array(one.length * 64); for (let i = 0; i < 64; i++) K1.set(one, i * one.length);
-    const E = await aesCbc(K.slice(0, 16), K.slice(16, 32), K1, false);
-    let m = 0; for (let i = 0; i < 16; i++) m += E[i];
-    K = await sha(['SHA-256', 'SHA-384', 'SHA-512'][m % 3], E);
-    if (round >= 64 && E[E.length - 1] <= round - 32) break;
-  }
-  return K.slice(0, 32);
-}
-async function encryptPdf(bytes, password) {
-  const flat = await (await openLib(bytes)).save({ useObjectStreams: false });
-  const doc = await openLib(flat), ctx = doc.context, rnd = n => crypto.getRandomValues(new Uint8Array(n));
-  const pw = enc.encode(password.normalize('NFKC')).slice(0, 127), key = rnd(32), zero = new Uint8Array(16);
-  const uvs = rnd(8), uks = rnd(8), ovs = rnd(8), oks = rnd(8);
-  const U = concat(await hashR6(pw, uvs), uvs, uks), UE = await aesCbc(await hashR6(pw, uks), zero, key, false);
-  const O = concat(await hashR6(pw, ovs, U), ovs, oks), OE = await aesCbc(await hashR6(pw, oks, U), zero, key, false);
-  const P = -4, perms = concat(new Uint8Array([0xFC, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]), enc.encode('Tadb'), rnd(4)), Perms = await aesCbc(key, zero, perms, false);
-  const seal = async data => { const iv = rnd(16); return concat(iv, await aesCbc(key, iv, data, true)); };
-  const jobs = [];
-  const walk = o => {
-    if (o instanceof PDFDict) for (const [k, v] of o.entries()) { if (v instanceof PDFString || v instanceof PDFHexString) jobs.push(async () => o.set(k, PDFHexString.of(hex(await seal(v.asBytes()))))); else walk(v); }
-    else if (o instanceof PDFArray) for (let i = 0; i < o.size(); i++) { const v = o.get(i); if (v instanceof PDFString || v instanceof PDFHexString) jobs.push(async () => o.set(i, PDFHexString.of(hex(await seal(v.asBytes()))))); else walk(v); }
-    else if (o instanceof PDFRawStream) { walk(o.dict); jobs.push(async () => { o.contents = await seal(o.contents); }); }
-  };
-  for (const [, obj] of ctx.enumerateIndirectObjects()) walk(obj);
-  for (const j of jobs) await j();
-  const H = b => PDFHexString.of(hex(b));
-  ctx.trailerInfo.Encrypt = ctx.obj({ Filter: 'Standard', V: 5, R: 6, Length: 256, P, O: H(O), U: H(U), OE: H(OE), UE: H(UE), Perms: H(Perms), EncryptMetadata: true, StmF: 'StdCF', StrF: 'StdCF', CF: { StdCF: { CFM: 'AESV3', AuthEvent: 'DocOpen', Length: 32 } } });
-  const idh = H(rnd(16)); ctx.trailerInfo.ID = ctx.obj([idh, idh]);
-  return doc.save({ useObjectStreams: false, updateFieldAppearances: false });
-}
-batchTool({ id: 'encrypt', group: '編輯與保護', title: 'PDF 加密', desc: '為 PDF 設定開啟密碼（AES-256）。忘記密碼就無法開啟檔案，請妥善保存。', action: '加密 PDF', zipName: 'encrypted-pdfs.zip',
-  options(o) { o.append(field('開啟密碼', inp('pw', 'password', '', { autocomplete: 'new-password' })), field('確認密碼', inp('pw2', 'password', '', { autocomplete: 'new-password' }))); },
-  async run(f, o) {
-    const pw = val(o, 'pw'); if (!pw) throw new Error('請先輸入開啟密碼。'); if (pw !== val(o, 'pw2')) throw new Error('兩次輸入的密碼不一致，請重新輸入。');
-    return [{ name: stem(f.name) + '-encrypted.pdf', bytes: await encryptPdf(f.bytes, pw) }];
-  } });
-
-/* ═════════ 11. 元數據 ═════════ */
-const META = [['Title', '標題'], ['Author', '作者'], ['Subject', '主旨'], ['Keywords', '關鍵詞'], ['Creator', '建立者'], ['Producer', '生產者']];
-const toLocal = d => { const z = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`; };
-const pdfDate = d => { const z = n => String(n).padStart(2, '0'), off = -d.getTimezoneOffset(), s = off >= 0 ? '+' : '-', a = Math.abs(off); return `D:${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}${s}${z(Math.floor(a / 60))}'${z(a % 60)}'`; };
-batchTool({ id: 'meta', group: '檔案', title: '編輯元數據', desc: '修改 PDF 的標題、作者、關鍵詞與日期等文件資訊。加入多個檔案時，下方內容會套用到所有檔案。', action: '更新並輸出 PDF', zipName: 'metadata-updated-pdfs.zip',
-  options(o) {
-    for (const [k, l] of META) o.append(field(l, inp('m' + k, 'text', '')));
-    for (const [k, l] of [['CreationDate', '建立日期'], ['ModDate', '修改日期']]) { const i = inp('m' + k, 'datetime-local', '', { step: 1 }); o.append(field(l, h('div', { class: 'row' }, i, h('button', { class: 'btn sm', type: 'button', onclick: () => i.value = toLocal(new Date()) }, '今天'), h('button', { class: 'btn sm', type: 'button', onclick: () => i.value = '' }, '清除')))); i.style.flex = '1'; }
-    o.append(h('p', { class: 'hint' }, '留空的欄位會從檔案中移除。'));
-  },
-  async onFiles(files, o) {
-    if (files.length !== 1) return; const d = await openLib(files[0].bytes), g = fn => { try { return fn(); } catch { return undefined; } };
-    const v = { Title: g(() => d.getTitle()), Author: g(() => d.getAuthor()), Subject: g(() => d.getSubject()), Keywords: g(() => d.getKeywords()), Creator: g(() => d.getCreator()), Producer: g(() => d.getProducer()) };
-    for (const [k] of META) $(`[name=m${k}]`, o).value = v[k] || '';
-    const c = g(() => d.getCreationDate()), m = g(() => d.getModificationDate()); $('[name=mCreationDate]', o).value = c ? toLocal(c) : ''; $('[name=mModDate]', o).value = m ? toLocal(m) : '';
-  },
-  async run(f, o) {
-    const d = await openLib(f.bytes), info = d.getInfoDict();
-    for (const [k] of META) { const v = val(o, 'm' + k).trim(); if (v) info.set(PDFName.of(k), PDFHexString.fromText(v)); else info.delete(PDFName.of(k)); }
-    for (const k of ['CreationDate', 'ModDate']) { const v = val(o, 'm' + k); if (v) info.set(PDFName.of(k), PDFString.of(pdfDate(new Date(v)))); else info.delete(PDFName.of(k)); }
-    d.catalog.delete(PDFName.of('Metadata'));
-    return [{ name: stem(f.name) + '-metadata.pdf', bytes: await d.save() }];
-  } });
-
-/* ═════════ 12. 調整頁面大小 ═════════ */
+/* ═════════ 7. 調整頁面大小 ═════════ */
 const SIZES = { A3: [297, 420], A4: [210, 297], A5: [148, 210], B5: [176, 250], Letter: [215.9, 279.4], Legal: [215.9, 355.6] };
 batchTool({ id: 'resize', group: '頁面', title: '調整頁面大小', desc: '把所有頁面改成指定的紙張尺寸，原內容會等比縮放並置中。', action: '調整並輸出 PDF', zipName: 'resized-pdfs.zip',
   options(o) {
@@ -714,13 +467,13 @@ batchTool({ id: 'resize', group: '頁面', title: '調整頁面大小', desc: '�
     return [{ name: stem(f.name) + '-resized.pdf', bytes: await out.save() }];
   } });
 
-/* ═════════ 13. 物件畫板 ═════════ */
+/* ═════════ 8. 物件畫板 ═════════ */
 tool({ id: 'board', group: '圖片', title: '物件畫板', desc: '在圖片上加文字、圖形、箭頭與筆跡，每個物件之後都能再調整。', full: true, build(sec) {
   const host = h('div', { class: 'boardhost' }); sec.append(host);
   initBoard(host, { saveFile, isActive: () => sec.classList.contains('on') });
 } });
 
-/* ═════════ 14. SVG 轉 PNG ═════════ */
+/* ═════════ 9. SVG 轉 PNG ═════════ */
 const CJK_STACK = `'Noto Sans TC', 'Microsoft JhengHei', '微軟正黑體', 'PingFang TC', 'Heiti TC', 'Source Han Sans TC', sans-serif`;
 function fixSvg(raw, strategy) {
   const doc = new DOMParser().parseFromString(raw, 'image/svg+xml');
@@ -815,4 +568,4 @@ tool({ id: 'svg', group: '圖片', title: 'SVG 轉 PNG', desc: '把 SVG 轉成�
 } });
 
 mount();
-window.__yj = { encryptPdf, compressPdf, rasterizePages, textToPng, sampleDoc };
+
