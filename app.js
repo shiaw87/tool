@@ -31,6 +31,7 @@ async function readFiles(list) {
   return out;
 }
 const isPdf = f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
+const isRaster = f => /\.(jpe?g|png|webp|gif|bmp)$/i.test(f.name) || /^image\/(jpeg|png|webp|gif|bmp)$/.test(f.type);
 const isImg = f => /\.(jpe?g|png)$/i.test(f.name) || /^image\/(jpeg|png)$/.test(f.type);
 
 async function openPdfjs(bytes) {
@@ -85,7 +86,7 @@ function showResults(box, outs, zipName, status) {
   box.replaceChildren();
   const dl = async (name, data) => { try { setStatus(status, 'ok', await saveFile(name, data)); } catch (e) { setStatus(status, 'err', e.message); } };
   if (outs.length > 1) box.append(h('li', {}, h('span', { class: 'nm' }, `全部 ${outs.length} 個檔案`), h('button', { class: 'btn sm pri', onclick: async () => dl(zipName, await zipOf(outs)) }, '下載 ZIP')));
-  for (const o of outs.slice(0, 200)) box.append(h('li', {}, h('span', { class: 'nm' }, o.name, o.note ? h('div', { class: 'hint' }, o.note) : null), h('span', { class: 'num' }, fmtSize(o.bytes.length)), h('button', { class: 'btn sm', onclick: () => dl(o.name, o.bytes) }, '下載')));
+  for (const o of outs.slice(0, 200)) box.append(h('li', {}, h('span', { class: 'nm' }, o.name, o.note ? h('div', { class: 'hint' }, o.note) : null), h('span', { class: 'num' }, fmtSize(o.bytes.length)), isPreviewable(o.name) ? h('button', { class: 'btn sm', onclick: () => viewBytes(o.name, o.bytes) }, '預覽') : null, h('button', { class: 'btn sm', onclick: () => dl(o.name, o.bytes) }, '下載')));
 }
 function dropzone(label, types, onFiles, multiple = true) {
   const input = h('input', { type: 'file', accept: types, multiple, hidden: true, id: uid(), onchange: async () => { await onFiles(await readFiles(input.files)); input.value = ''; } });
@@ -99,6 +100,34 @@ function attachDrop(el, onFiles) {
   el.addEventListener('dragleave', () => el.classList.remove('over'));
   el.addEventListener('drop', async e => { if (!e.dataTransfer.files.length) return; e.preventDefault(); el.classList.remove('over'); await onFiles(await readFiles(e.dataTransfer.files)); });
 }
+
+/* ───────── 放大檢視：獨立視窗內縮放與拖曳，不必放大整個網頁 ───────── */
+let viewerEl = null;
+function openViewer(src, title = '預覽', checker = false) {
+  if (!viewerEl) {
+    const img = h('img', { alt: '' }), pane = h('div', { class: 'vpane' }, img), pct = h('span', { class: 'num vpct' }), ttl = h('b', { class: 'vttl' });
+    const st = { z: 1, fit: 1 };
+    const apply = () => { img.style.width = Math.max(1, Math.round(img.naturalWidth * st.z)) + 'px'; pct.textContent = Math.round(st.z * 100) + '%'; };
+    const setZ = (z, cx, cy) => { z = Math.min(16, Math.max(.05, z)); const r = pane.getBoundingClientRect(); cx ??= r.width / 2; cy ??= r.height / 2; const fx = (pane.scrollLeft + cx) / st.z, fy = (pane.scrollTop + cy) / st.z; st.z = z; apply(); pane.scrollLeft = fx * z - cx; pane.scrollTop = fy * z - cy; };
+    const fit = () => { st.fit = Math.min(1, (pane.clientWidth - 32) / img.naturalWidth, (pane.clientHeight - 32) / img.naturalHeight) || 1; st.z = st.fit; apply(); };
+    const close = () => { viewerEl.hidden = true; if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src); img.removeAttribute('src'); st.back?.focus?.(); };
+    const B = (label, fn, aria) => h('button', { class: 'btn sm', onclick: fn, 'aria-label': aria || label, title: aria || label }, label);
+    viewerEl = h('div', { class: 'viewer', role: 'dialog', 'aria-modal': 'true', 'aria-label': '放大檢視', hidden: true },
+      h('div', { class: 'vbar' }, ttl, h('span', { style: 'flex:1' }), B('－', () => setZ(st.z / 1.25), '縮小'), pct, B('＋', () => setZ(st.z * 1.25), '放大'), B('符合視窗', fit), B('100%', () => setZ(1)), B('關閉', close)), pane);
+    document.body.append(viewerEl);
+    img.onload = fit;
+    pane.addEventListener('wheel', e => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); const r = pane.getBoundingClientRect(); setZ(st.z * Math.exp(-e.deltaY * .01), e.clientX - r.left, e.clientY - r.top); }, { passive: false });
+    pane.addEventListener('dblclick', e => { const r = pane.getBoundingClientRect(); setZ(st.z < 1 ? 1 : st.z * 2, e.clientX - r.left, e.clientY - r.top); });
+    pane.addEventListener('pointerdown', e => { if (e.button) return; const x0 = e.clientX, y0 = e.clientY, sl = pane.scrollLeft, stp = pane.scrollTop; pane.setPointerCapture(e.pointerId); pane.classList.add('grab');
+      const mv = ev => { pane.scrollLeft = sl - (ev.clientX - x0); pane.scrollTop = stp - (ev.clientY - y0); }, up = () => { pane.removeEventListener('pointermove', mv); pane.removeEventListener('pointerup', up); pane.classList.remove('grab'); };
+      pane.addEventListener('pointermove', mv); pane.addEventListener('pointerup', up); });
+    document.addEventListener('keydown', e => { if (viewerEl.hidden) return; if (e.key === 'Escape') close(); else if (e.key === '+' || e.key === '=') setZ(st.z * 1.25); else if (e.key === '-') setZ(st.z / 1.25); else return; e.stopPropagation(); }, true);
+    viewerEl._open = (s, t, c) => { st.back = document.activeElement; ttl.textContent = t; pane.classList.toggle('chk', c); viewerEl.hidden = false; img.src = s; $('.vbar .btn:last-child', viewerEl).focus(); };
+  }
+  viewerEl._open(src, title, checker);
+}
+const isPreviewable = n => /\.(jpe?g|png|webp)$/i.test(n);
+const viewBytes = (name, bytes) => openViewer(URL.createObjectURL(new Blob([bytes], { type: MIME[name.split('.').pop().toLowerCase().replace('jpeg', 'jpg')] })), name, /\.(png|webp)$/i.test(name));
 
 /* ───────── PDF 幾何：以「畫面座標」（左上原點、已套用頁面旋轉）放置內容 ───────── */
 function pageView(page) {
@@ -165,7 +194,7 @@ async function loadImageFile(f, removeBg = false) {
 const TOOLS = [];
 function tool(def) { TOOLS.push(def); }
 function mount() {
-  const nav = $('#nav'), main = $('#main'); let grp = ''; const order = ['頁面', '檔案', '圖片']; TOOLS.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));
+  const nav = $('#nav'), main = $('#main'); let grp = ''; const order = ['PDF', '壓縮與轉換', '圖片']; TOOLS.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));
   for (const t of TOOLS) {
     if (t.group !== grp) { grp = t.group; nav.append(h('div', { class: 'grp' }, grp)); }
     nav.append(h('button', { 'data-t': t.id, onclick: () => go(t.id) }, t.title));
@@ -173,11 +202,14 @@ function mount() {
     main.append(sec); t.build(sec);
   }
   const go = id => { if (!TOOLS.some(t => t.id === id)) id = TOOLS[0].id; $$('.tool').forEach(s => s.classList.toggle('on', s.id === 't-' + id)); main.classList.toggle('full', !!TOOLS.find(t => t.id === id).full); $$('#nav button').forEach(b => b.setAttribute('aria-current', b.dataset.t === id)); if (location.hash.slice(1) !== id) { try { history.replaceState(null, '', '#' + id); } catch {} } window.dispatchEvent(new CustomEvent('toolshown', { detail: id })); };
+  const tg = $('#navtoggle'), setNav = c => { document.body.classList.toggle('navc', c); tg.setAttribute('aria-expanded', !c); tg.title = c ? '展開側邊欄' : '收起側邊欄'; tg.setAttribute('aria-label', tg.title); tg.textContent = c ? '»' : '«'; try { localStorage.setItem('yj-nav', c ? '1' : ''); } catch {} window.dispatchEvent(new Event('resize')); };
+  tg.onclick = () => setNav(!document.body.classList.contains('navc'));
+  let saved = false; try { saved = !!localStorage.getItem('yj-nav'); } catch {} setNav(saved);
   window.addEventListener('hashchange', () => go(location.hash.slice(1)));
   go(location.hash.slice(1));
 }
 // 批次工具：多個檔案 + 設定 + 執行 + 結果清單
-function batchTool({ id, group, title, desc, accept = '.pdf,application/pdf', filter = isPdf, options, action, zipName, run, onFiles }) {
+function batchTool({ id, group, title, desc, accept = '.pdf,application/pdf', filter = isPdf, options, action, zipName, run, onFiles, dropLabel = '加入 PDF' }) {
   tool({ id, group, title, desc, build(sec) {
     const files = [];
     const list = h('ul', { class: 'files' }), status = h('div', { class: 'status', role: 'status' }), results = h('ul', { class: 'results' });
@@ -185,7 +217,7 @@ function batchTool({ id, group, title, desc, accept = '.pdf,application/pdf', fi
     const redraw = () => list.replaceChildren(...files.map(f => h('li', {}, h('span', { class: 'nm' }, f.name), h('span', { class: 'sz' }, fmtSize(f.bytes.length)), h('button', { class: 'btn sm', 'aria-label': '移除 ' + f.name, onclick: () => { files.splice(files.indexOf(f), 1); redraw(); } }, '移除'))));
     const add = async fs => { const ok = fs.filter(filter); if (ok.length < fs.length) setStatus(status, 'err', '已略過不支援的檔案格式'); files.push(...ok); redraw(); if (onFiles && ok.length) try { await onFiles(files, opt); } catch (e) { setStatus(status, 'err', e.message); } };
     const btn = h('button', { class: 'btn pri', onclick: async () => {
-      if (!files.length) return setStatus(status, 'err', '請先加入 PDF 檔案。');
+      if (!files.length) return setStatus(status, 'err', '請先加入檔案。');
       btn.disabled = true; const outs = [];
       try {
         for (const [i, f] of files.entries()) { setStatus(status, 'busy', `處理中 ${i + 1}/${files.length}：${f.name}`); outs.push(...await run(f, opt, m => setStatus(status, 'busy', `${f.name}：${m}`))); }
@@ -194,7 +226,7 @@ function batchTool({ id, group, title, desc, accept = '.pdf,application/pdf', fi
       btn.disabled = false;
     } }, action);
     sec.append(h('div', { class: 'cols' },
-      h('div', {}, dropzone('加入 PDF', accept, add), list),
+      h('div', {}, dropzone(dropLabel, accept, add), list),
       h('div', { class: 'side' }, h('div', { class: 'panel' }, h('h2', {}, '設定'), opt, btn, status), h('div', { class: 'panel' }, h('h2', {}, '輸出'), results, h('p', { class: 'hint' }, '處理完成的檔案會列在這裡。')))));
   } });
 }
@@ -205,14 +237,19 @@ const chk = (name, label, checked = false) => h('label', { class: 'chk' }, h('in
 const val = (root, name) => { const e = $(`[name="${name}"]`, root); return e.type === 'checkbox' ? e.checked : e.value; };
 
 /* ═════════ 1. 組織：新增、合併、分割、排序 ═════════ */
-tool({ id: 'organize', group: '頁面', title: '合併、分割與組織', desc: '加入多個 PDF 或圖片，拖曳縮圖調整順序，旋轉、複製、刪除或插入空白頁，再合併輸出或把選取的頁面另存。', build(sec) {
+tool({ id: 'organize', group: 'PDF', title: '分割、合併 PDF', desc: '加入多個 PDF 或圖片，拖曳調整順序，旋轉、複製、刪除或插入空白頁，再合併成一份，或把選取的頁面、每一頁分開另存。', build(sec) {
   const files = new Map(); let pages = [];
   const grid = h('div', { class: 'grid' }), status = h('div', { class: 'status', role: 'status' }), results = h('ul', { class: 'results' }), count = h('span', { class: 'num' });
   const optUnify = sel('unify', [['', '保留原頁面尺寸'], ['p', '統一為 A4（直向）'], ['l', '統一為 A4（橫向）']]);
   const optStrip = chk('strip', '移除元數據（metadata）');
   const queue = []; let busy = false;
-  const pump = async () => { if (busy) return; busy = true; while (queue.length) { const p = queue.shift(); if (!pages.includes(p) || p.thumb) continue; try { p.thumb = await renderCanvas(files.get(p.file).pj, p.idx + 1, { width: 220 }); const slot = $(`[data-id="${p.id}"] .th`, grid); if (slot) { p.thumb.style.transform = `rotate(${p.rot}deg)`; slot.replaceChildren(p.thumb); } } catch (e) { console.warn(e); } } busy = false; };
+  const pump = async () => { if (busy) return; busy = true; while (queue.length) { const p = queue.shift(); if (!pages.includes(p) || p.thumb) continue; try { p.thumb = await renderCanvas(files.get(p.file).pj, p.idx + 1, { width: 360 }); const slot = $(`[data-id="${p.id}"] .th`, grid); if (slot) { p.thumb.style.transform = `rotate(${p.rot}deg)`; slot.replaceChildren(p.thumb); } } catch (e) { console.warn(e); } } busy = false; };
   let dragId = null, dragFile = null;
+  const zoomPage = async (p, i) => { try { setStatus(status, 'busy', '產生預覽中…'); const c = await renderCanvas(files.get(p.file).pj, p.idx + 1, { scale: 2, rot: p.rot }); const b = await new Promise(r => c.toBlob(r, 'image/png')); openViewer(URL.createObjectURL(b), `${files.get(p.file).name}，第 ${i + 1} 頁`); setStatus(status, '', ''); } catch (e) { setStatus(status, 'err', e.message); } };
+  const thumb = h('input', { type: 'range', min: 110, max: 420, step: 10, value: 150, id: uid(), 'aria-label': '縮圖大小', style: 'width:110px' });
+  try { const v = +localStorage.getItem('yj-thumb'); if (v >= 110 && v <= 420) thumb.value = v; } catch {}
+  const setThumb = () => { grid.style.setProperty('--thumb', thumb.value + 'px'); try { localStorage.setItem('yj-thumb', thumb.value); } catch {} };
+  thumb.oninput = setThumb; setThumb();
   // 檔案順序：依各檔第一頁出現的位置；空白頁跟著前一頁所屬的檔案移動
   const fileBar = h('ul', { class: 'files filebar', 'aria-label': '檔案順序' });
   const fileIds = () => [...new Set(pages.filter(p => !p.blank).map(p => p.file))];
@@ -243,12 +280,13 @@ tool({ id: 'organize', group: '頁面', title: '合併、分割與組織', desc:
       if (p.thumb) p.thumb.style.transform = `rotate(${p.rot}deg)`;
       const act = (lab, sym, fn) => h('button', { title: lab, 'aria-label': lab, onclick: e => { e.stopPropagation(); fn(); draw(); } }, sym);
       const card = h('div', { class: 'pg' + (p.sel ? ' sel' : ''), 'data-id': p.id, draggable: 'true', tabindex: 0, role: 'checkbox', 'aria-checked': !!p.sel, 'aria-label': `第 ${i + 1} 頁`,
-        onclick: () => { p.sel = !p.sel; draw(); }, onkeydown: e => { if (e.key === ' ') { e.preventDefault(); p.sel = !p.sel; draw(); } },
+        onclick: () => { p.sel = !p.sel; draw(); }, ondblclick: () => { if (!p.blank) zoomPage(p, i); }, onkeydown: e => { if (e.key === ' ') { e.preventDefault(); p.sel = !p.sel; draw(); } },
         ondragstart: e => { dragId = p.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', p.id); }, ondragend: () => { dragId = null; },
         ondragover: e => { if (dragId) { e.preventDefault(); card.classList.add('dragover'); } }, ondragleave: () => card.classList.remove('dragover'),
         ondrop: e => { if (!dragId) return; e.preventDefault(); e.stopPropagation(); const from = pages.findIndex(x => x.id === dragId), to = pages.indexOf(p); dragId = null; if (from < 0 || from === to) return draw(); const [m] = pages.splice(from, 1); pages.splice(to, 0, m); draw(); } },
         th, h('div', { class: 'cap' }, h('span', {}, p.blank ? '空白頁' : files.get(p.file).name), h('span', { class: 'num' }, i + 1)),
         h('div', { class: 'acts' },
+          p.blank ? null : h('button', { title: '放大檢視', 'aria-label': '放大檢視', onclick: e => { e.stopPropagation(); zoomPage(p, i); } }, '⤢'),
           act('向左旋轉', '↺', () => p.rot = (p.rot + 270) % 360), act('向右旋轉', '↻', () => p.rot = (p.rot + 90) % 360),
           act('複製頁面', '⧉', () => pages.splice(i + 1, 0, { ...p, id: uid(), sel: false, thumb: null })),
           act('在此頁後加入空白頁', '＋', () => pages.splice(i + 1, 0, { id: uid(), blank: true, rot: 0, w: A4[0], h: A4[1] })),
@@ -297,7 +335,7 @@ tool({ id: 'organize', group: '頁面', title: '合併、分割與組織', desc:
         h('button', { class: 'btn sm', onclick: bulk(l => l.forEach(p => p.rot = (p.rot + 270) % 360)) }, '↺ 旋轉已選'),
         h('button', { class: 'btn sm', onclick: bulk(l => l.forEach(p => p.rot = (p.rot + 90) % 360)) }, '↻ 旋轉已選'),
         h('button', { class: 'btn sm', onclick: bulk(l => pages = pages.filter(p => !p.sel)) }, '刪除已選'),
-        h('button', { class: 'btn sm', onclick: () => { pages = []; files.clear(); draw(); } }, '清除全部'), count),
+        h('button', { class: 'btn sm', onclick: () => { pages = []; files.clear(); draw(); } }, '清除全部'), count, h('span', { style: 'flex:1' }), h('label', { class: 'hint', for: thumb.id, style: 'margin:0' }, '縮圖大小'), thumb),
       grid),
     h('div', { class: 'side' },
       h('div', { class: 'panel' }, h('h2', {}, '輸出設定'), field('頁面尺寸', optUnify), optStrip,
@@ -310,7 +348,7 @@ tool({ id: 'organize', group: '頁面', title: '合併、分割與組織', desc:
           h('button', { class: 'btn', onclick: guard(async () => done(await toImages(need(true), 'jpg'), 'selected-pages-jpg.zip')) }, '匯出 JPG'),
           h('button', { class: 'btn', onclick: guard(async () => done(await toImages(need(true), 'png'), 'selected-pages-png.zip')) }, '匯出 PNG')),
         status),
-      h('div', { class: 'panel' }, h('h2', {}, '輸出'), results, h('p', { class: 'hint' }, '點縮圖可選取頁面，拖曳縮圖可調整順序。')))));
+      h('div', { class: 'panel' }, h('h2', {}, '輸出'), results, h('p', { class: 'hint' }, '點縮圖可選取頁面，拖曳可調整順序，按 ⤢ 或連點兩下可放大檢視。')))));
   sampleDoc().then(bytes => add([{ id: uid(), name: '範例文件.pdf', bytes, type: 'application/pdf' }])).catch(console.warn);
 } });
 function stripMeta(doc) {
@@ -331,7 +369,7 @@ async function sampleDoc() {
   return d.save();
 }
 
-/* ═════════ 2. 壓縮 ═════════ */
+/* ═════════ 2. 壓縮（PDF 與圖片） ═════════ */
 const PROFILES = { less: [.85, 2400], recommended: [.7, 1800], high: [.5, 1300], extreme: [.3, 900] };
 const LADDER = [[.9, 2800], [.8, 2200], [.7, 1800], [.6, 1500], [.5, 1200], [.4, 1000], [.3, 800], [.2, 600], [.12, 420]];
 function jpegComponents(b) { let i = 2; while (i + 9 < b.length) { if (b[i] !== 0xFF) return 0; const m = b[i + 1]; if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) return b[i + 9]; i += 2 + (b[i + 2] << 8 | b[i + 3]); } return 0; }
@@ -362,57 +400,66 @@ async function compressPdf(bytes, q, maxSide) {
   }
   return { bytes: await doc.save({ useObjectStreams: true }), touched, skippedCmyk };
 }
-batchTool({ id: 'compress', group: '檔案', title: '壓縮 PDF', desc: '重新取樣並壓縮 PDF 內的圖片，同時整理檔案結構。文字與向量圖形保持原樣。', action: '壓縮 PDF', zipName: 'compressed-pdfs.zip',
+// 圖片：依品質重新編碼，必要時縮小尺寸。fmt 為 auto 時 JPG 維持 JPG，其餘轉 WebP（保留透明）
+async function encodeImage(bmp, { type, q, maxSide = 0, bg = '#ffffff' }) {
+  const s = maxSide ? Math.min(1, maxSide / Math.max(bmp.width, bmp.height)) : 1, c = h('canvas');
+  c.width = Math.max(1, Math.round(bmp.width * s)); c.height = Math.max(1, Math.round(bmp.height * s));
+  const x = c.getContext('2d'); x.imageSmoothingQuality = 'high';
+  if (type === 'image/jpeg') { x.fillStyle = bg; x.fillRect(0, 0, c.width, c.height); }
+  x.drawImage(bmp, 0, 0, c.width, c.height);
+  const blob = await new Promise(r => c.toBlob(r, type, q));
+  if (!blob) throw new Error('圖片太大，瀏覽器無法處理。');
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), ext: EXT[blob.type] || 'png', w: c.width, h: c.height, fellBack: blob.type !== type };
+}
+const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+const MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+const isJpg = f => /\.jpe?g$/i.test(f.name) || f.type === 'image/jpeg';
+async function decodeImage(f) { try { return await createImageBitmap(new Blob([f.bytes], { type: f.type || '' })); } catch { throw new Error('這個圖片檔讀不出來，請換成 JPG、PNG、WebP、GIF 或 BMP。'); } }
+batchTool({ id: 'compress', group: '壓縮與轉換', title: '壓縮 PDF 與圖片', desc: 'PDF 會重新壓縮內嵌的圖片，文字與向量圖形保持原樣。圖片（JPG、PNG、WebP）會依選定的強度重新編碼。',
+  action: '開始壓縮', zipName: 'compressed-files.zip', accept: '.pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp', filter: f => isPdf(f) || isRaster(f), dropLabel: '加入 PDF 或圖片',
   options(o) {
     const custom = field('壓縮比率（把檔案大小減少 %）', inp('reduction', 'number', 50, { min: 1, max: 99, step: 1 })); custom.hidden = true;
     const s = sel('profile', [['less', '輕度壓縮'], ['recommended', '建議壓縮'], ['high', '高度壓縮'], ['extreme', '極限壓縮'], ['custom', '自訂壓縮']], 'recommended'); s.onchange = () => custom.hidden = s.value !== 'custom';
-    o.append(field('壓縮強度', s), custom, h('p', { class: 'hint' }, '實際大小視檔案內容而定；以文字為主的 PDF 可壓縮的空間較小。'));
+    o.append(field('壓縮強度', s), custom, h('h2', { style: 'margin-top:14px' }, '圖片檔專用'),
+      field('輸出格式', sel('ifmt', [['auto', '自動（JPG 維持 JPG，其餘轉 WebP）'], ['jpg', 'JPG'], ['webp', 'WebP']])),
+      field('最長邊上限', sel('iside', [['0', '不縮小尺寸'], ['3840', '3840 px'], ['2560', '2560 px'], ['1920', '1920 px'], ['1280', '1280 px']])),
+      h('p', { class: 'hint' }, '實際大小視內容而定。以文字為主的 PDF 可壓縮的空間較小；轉成 JPG 時透明區域會變成白色。'));
   },
   async run(f, o, say) {
-    const profile = val(o, 'profile'); let best, note;
-    if (profile === 'custom') {
-      const r = Number(val(o, 'reduction')); if (!Number.isInteger(r) || r < 1 || r > 99) throw new Error('請輸入 1–99 的整數百分比。');
-      const target = f.bytes.length * (1 - r / 100);
-      for (const [i, [q, m]] of LADDER.entries()) { say(`嘗試第 ${i + 1}/${LADDER.length} 級`); const res = await compressPdf(f.bytes, q, m); if (!best || res.bytes.length < best.bytes.length) best = res; if (res.bytes.length <= target) break; }
-      note = `目標減少 ${r}%，`;
-    } else best = await compressPdf(f.bytes, ...PROFILES[profile]);
-    if (best.bytes.length >= f.bytes.length) return [{ name: stem(f.name) + '-compressed.pdf', bytes: f.bytes, note: '這份檔案已無法再縮小，輸出與原檔相同。' }];
-    const actual = Math.round((1 - best.bytes.length / f.bytes.length) * 100);
-    return [{ name: stem(f.name) + '-compressed.pdf', bytes: best.bytes, note: `${note || ''}實際減少 ${actual}%（${fmtSize(f.bytes.length)} → ${fmtSize(best.bytes.length)}）` + (best.skippedCmyk ? `；${best.skippedCmyk} 張 CMYK 圖片保持原樣` : '') }];
-  } });
-
-/* ═════════ 3. 轉換為圖片 ═════════ */
-batchTool({ id: 'convert', group: '檔案', title: '轉換 PDF', desc: '把 PDF 的每一頁轉成 JPG 或 PNG 圖片。', action: '轉換', zipName: 'converted-images.zip',
-  options(o) { o.append(field('輸出格式', sel('fmt', [['jpg', 'JPG'], ['png', 'PNG']])), field('解析度', sel('dpi', [['72', '72 dpi（螢幕）'], ['150', '150 dpi（一般）'], ['300', '300 dpi（列印）']], '150')), field('頁面範圍', inp('range', 'text', '', { placeholder: '留空代表全部頁面，例如 1-3, 5' }))); },
-  async run(f, o, say) {
-    const pj = await openPdfjs(f.bytes), fmt = val(o, 'fmt'), scale = Number(val(o, 'dpi')) / 72, outs = [];
-    for (const i of parseRange(val(o, 'range'), pj.numPages)) { say(`第 ${i + 1} 頁`); const c = await renderCanvas(pj, i + 1, { scale }); outs.push({ name: `${stem(f.name)}-p${String(i + 1).padStart(3, '0')}.${fmt}`, bytes: await canvasBytes(c, fmt === 'jpg' ? 'image/jpeg' : 'image/png', .92) }); }
-    return outs;
-  } });
-
-/* ═════════ 4. 圖像抽取 ═════════ */
-batchTool({ id: 'extract', group: '檔案', title: '圖像抽取', desc: '把 PDF 內嵌的圖片逐一取出，存成 PNG。', action: '抽取圖像', zipName: 'extracted-images.zip',
-  async run(f, o, say) {
-    const pj = await openPdfjs(f.bytes), outs = [], seen = new Set(), OPS = pdfjsLib.OPS;
-    for (let n = 1; n <= pj.numPages; n++) {
-      say(`第 ${n} 頁`); const page = await pj.getPage(n), ops = await page.getOperatorList();
-      for (let i = 0; i < ops.fnArray.length; i++) {
-        if (ops.fnArray[i] !== OPS.paintImageXObject && ops.fnArray[i] !== OPS.paintImageXObjectRepeat) continue;
-        const id = ops.argsArray[i][0]; if (seen.has(id)) continue; seen.add(id);
-        const store = String(id).startsWith('g_') ? page.commonObjs : page.objs;
-        const im = await Promise.race([new Promise(r => store.get(id, r)), new Promise(r => setTimeout(() => r(null), 4000))]); if (!im) continue;
-        const c = h('canvas'); c.width = im.width; c.height = im.height; const x = c.getContext('2d');
-        if (im.bitmap) x.drawImage(im.bitmap, 0, 0);
-        else if (im.data) { const d = x.createImageData(im.width, im.height), src = im.data, px = im.width * im.height; if (src.length === px * 4) d.data.set(src); else if (src.length === px * 3) for (let k = 0; k < px; k++) { d.data[k * 4] = src[k * 3]; d.data[k * 4 + 1] = src[k * 3 + 1]; d.data[k * 4 + 2] = src[k * 3 + 2]; d.data[k * 4 + 3] = 255; } else continue; x.putImageData(d, 0, 0); }
-        else continue;
-        outs.push({ name: `${stem(f.name)}-p${n}-img${outs.length + 1}.png`, bytes: await canvasBytes(c), note: `${im.width} × ${im.height} px` });
-      }
+    const profile = val(o, 'profile'), r = Number(val(o, 'reduction')), customMode = profile === 'custom';
+    if (customMode && (!Number.isInteger(r) || r < 1 || r > 99)) throw new Error('請輸入 1–99 的整數百分比。');
+    const target = f.bytes.length * (1 - r / 100), steps = customMode ? LADDER : [PROFILES[profile]];
+    const report = (bytes, extra = '') => `${customMode ? `目標減少 ${r}%，` : ''}實際減少 ${Math.round((1 - bytes.length / f.bytes.length) * 100)}%（${fmtSize(f.bytes.length)} → ${fmtSize(bytes.length)}）${extra}`;
+    if (isPdf(f)) {
+      let best;
+      for (const [i, [q, m]] of steps.entries()) { if (customMode) say(`嘗試第 ${i + 1}/${steps.length} 級`); const res = await compressPdf(f.bytes, q, m); if (!best || res.bytes.length < best.bytes.length) best = res; if (!customMode || res.bytes.length <= target) break; }
+      if (best.bytes.length >= f.bytes.length) return [{ name: stem(f.name) + '-compressed.pdf', bytes: f.bytes, note: '這份檔案已無法再縮小，輸出與原檔相同。' }];
+      return [{ name: stem(f.name) + '-compressed.pdf', bytes: best.bytes, note: report(best.bytes, best.skippedCmyk ? `；${best.skippedCmyk} 張 CMYK 圖片保持原樣` : '') }];
     }
-    if (!outs.length) throw new Error('未找到可抽取圖像');
+    const bmp = await decodeImage(f), fmt = val(o, 'ifmt'), type = fmt === 'auto' ? (isJpg(f) ? 'image/jpeg' : 'image/webp') : MIME[fmt], maxSide = +val(o, 'iside'); let best;
+    for (const [i, [q]] of steps.entries()) { if (customMode) say(`嘗試第 ${i + 1}/${steps.length} 級`); const res = await encodeImage(bmp, { type, q, maxSide }); if (!best || res.bytes.length < best.bytes.length) best = res; if (!customMode || res.bytes.length <= target) break; }
+    bmp.close?.();
+    if (best.bytes.length >= f.bytes.length && !maxSide) return [{ name: f.name, bytes: f.bytes, note: '這張圖已無法再縮小，輸出與原檔相同。' }];
+    return [{ name: `${stem(f.name)}-compressed.${best.ext}`, bytes: best.bytes, note: report(best.bytes, `，${best.w} × ${best.h} px` + (best.fellBack ? '；這個瀏覽器不支援輸出 WebP，已改存 PNG' : '')) }];
+  } });
+
+/* ═════════ 3. 格式轉換（PDF 轉圖片、圖片互轉） ═════════ */
+batchTool({ id: 'convert', group: '壓縮與轉換', title: '格式轉換', desc: '把 PDF 的每一頁轉成圖片，或在 JPG、PNG、WebP 之間互轉。GIF 與 BMP 也可以當作來源。',
+  action: '開始轉換', zipName: 'converted-images.zip', accept: '.pdf,.jpg,.jpeg,.png,.webp,.gif,.bmp,application/pdf,image/*', filter: f => isPdf(f) || isRaster(f), dropLabel: '加入 PDF 或圖片',
+  options(o) {
+    o.append(field('輸出格式', sel('fmt', [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP']])), field('品質（JPG、WebP）', sel('q', [['0.95', '最高'], ['0.9', '高'], ['0.8', '中'], ['0.6', '低']], '0.9')),
+      field('透明區域轉成 JPG 時的底色', inp('bg', 'color', '#ffffff', { style: 'width:44px;height:28px;padding:0;border:1px solid var(--line);border-radius:6px' })),
+      h('h2', { style: 'margin-top:14px' }, 'PDF 專用'), field('解析度', sel('dpi', [['72', '72 dpi（螢幕）'], ['150', '150 dpi（一般）'], ['300', '300 dpi（列印）']], '150')), field('頁面範圍', inp('range', 'text', '', { placeholder: '留空代表全部頁面，例如 1-3, 5' })));
+  },
+  async run(f, o, say) {
+    const fmt = val(o, 'fmt'), type = MIME[fmt], q = +val(o, 'q'), bg = val(o, 'bg'), outs = [];
+    const emit = async (src, name) => { const r = await encodeImage(src, { type, q, bg }); outs.push({ name: `${name}.${r.ext}`, bytes: r.bytes, note: `${r.w} × ${r.h} px` + (r.fellBack ? '；這個瀏覽器不支援輸出 WebP，已改存 PNG' : '') }); };
+    if (isPdf(f)) { const pj = await openPdfjs(f.bytes), scale = Number(val(o, 'dpi')) / 72; for (const i of parseRange(val(o, 'range'), pj.numPages)) { say(`第 ${i + 1} 頁`); await emit(await renderCanvas(pj, i + 1, { scale }), `${stem(f.name)}-p${String(i + 1).padStart(3, '0')}`); } }
+    else { const bmp = await decodeImage(f); await emit(bmp, stem(f.name)); bmp.close?.(); }
     return outs;
   } });
 
-/* ═════════ 5. 浮水印 ═════════ */
+/* ═════════ 4. 浮水印 ═════════ */
 const COLORS = ['#b3261e', '#1f47c8', '#17794a', '#5c6475', '#000000', '#f2b84b'];
 function colorField(name, value) {
   const input = inp(name, 'color', value, { style: 'width:44px;height:28px;padding:0;border:1px solid var(--line);border-radius:6px' });
@@ -425,7 +472,7 @@ function anchor(pos, vw, vh, w, hh, m) {
   return pos === 'c' ? [vw / 2, vh / 2] : [x, y];
 }
 let wmImage = null;
-batchTool({ id: 'watermark', group: '頁面', title: '浮水印', desc: '在每一頁加上文字或圖片浮水印，可調整大小、顏色、透明度、角度與位置。', action: '套用浮水印', zipName: 'watermarked-pdfs.zip',
+batchTool({ id: 'watermark', group: 'PDF', title: '浮水印', desc: '在每一頁加上文字或圖片浮水印，可調整大小、顏色、透明度、角度與位置。', action: '套用浮水印', zipName: 'watermarked-pdfs.zip',
   options(o) {
     const txt = h('div', {}, field('浮水印文字', inp('text', 'text', '機密文件')), h('div', { class: 'two' }, field('文字大小', inp('size', 'number', 54, { min: 6, max: 400 })), field('字母間距', inp('spacing', 'number', 2, { min: 0, max: 60 }))), field('顏色', colorField('color', '#b3261e')));
     const prev = h('img', { class: 'sigprev', alt: '浮水印圖片預覽', hidden: true });
@@ -453,51 +500,72 @@ batchTool({ id: 'watermark', group: '頁面', title: '浮水印', desc: '在每�
     return [{ name: stem(f.name) + '-watermarked.pdf', bytes: await doc.save() }];
   } });
 
-/* ═════════ 6. 頁碼 ═════════ */
-const PN_FMT = { n: i => `${i}`, page: i => `Page ${i}`, zht: i => `第${i}頁`, zhs: i => `第${i}页`, ja: i => `${i}ページ`, ko: i => `${i}페이지`, of: (i, n) => `${i} / ${n}` };
-batchTool({ id: 'pagenum', group: '頁面', title: '新增頁碼', desc: '為每一頁加上頁碼，可選擇樣式、位置與起始號碼。', action: '加入頁碼', zipName: 'numbered-pdfs.zip',
-  options(o) {
-    o.append(field('頁碼樣式', sel('fmt', [['n', '1, 2, 3'], ['page', 'Page 1, Page 2, Page 3'], ['zht', '第1頁, 第2頁, 第3頁'], ['zhs', '第1页, 第2页, 第3页'], ['ja', '1ページ, 2ページ, 3ページ'], ['ko', '1페이지, 2페이지, 3페이지'], ['of', '1 / 總頁數']])),
-      field('頁碼位置', sel('pos', [['bc', '下方置中'], ['bl', '左下'], ['br', '右下'], ['tc', '上方置中'], ['tl', '左上'], ['tr', '右上']])),
-      h('div', { class: 'two' }, field('起始頁碼', inp('start', 'number', 1, { min: 0 })), field('文字大小', inp('size', 'number', 11, { min: 5, max: 72 }))),
-      field('顏色', colorField('color', '#000000')), field('頁面範圍', inp('range', 'text', '', { placeholder: '留空代表全部頁面，例如 1-3, 5' })));
-  },
-  async run(f, o) {
-    const doc = await openLib(f.bytes), pages = doc.getPages(), idx = parseRange(val(o, 'range'), pages.length), start = parseInt(val(o, 'start')) || 0, fmt = PN_FMT[val(o, 'fmt')];
-    for (const [k, i] of idx.entries()) {
-      const p = pages[i], v = pageView(p), r = await textToPng(fmt(start + k, start + idx.length - 1), { size: +val(o, 'size') || 11, color: val(o, 'color') });
-      const [cx, cy] = anchor(val(o, 'pos'), v.vw, v.vh, r.w, r.h, 22);
-      placeImage(p, await doc.embedPng(r.bytes), { cx, cy, w: r.w, h: r.h });
-    }
-    return [{ name: stem(f.name) + '-numbered.pdf', bytes: await doc.save() }];
-  } });
+/* ═════════ 去背景 ═════════ */
+// 以顏色相近程度判斷背景：從圖片邊緣（及使用者點選的位置）往內擴散，適合純色或接近純色的背景
+function removeBackground(img, { tol, feather, seeds, edge }) {
+  const W = img.width, H = img.height, src = img.data, out = new ImageData(new Uint8ClampedArray(src), W, H), mask = new Uint8Array(W * H), stack = new Int32Array(W * H);
+  const T2 = (tol * 2.2) ** 2;
+  const flood = (starts, r0, g0, b0) => {
+    let n = 0; const push = i => { if (mask[i]) return; const k = i * 4, dr = src[k] - r0, dg = src[k + 1] - g0, db = src[k + 2] - b0; if (src[k + 3] > 8 && dr * dr + dg * dg + db * db > T2) return; mask[i] = 1; stack[n++] = i; };
+    for (const i of starts) push(i);
+    while (n) { const i = stack[--n], x = i % W; if (x > 0) push(i - 1); if (x < W - 1) push(i + 1); if (i >= W) push(i - W); if (i < W * (H - 1)) push(i + W); }
+  };
+  if (edge) {
+    const border = []; for (let x = 0; x < W; x++) border.push(x, (H - 1) * W + x); for (let y = 1; y < H - 1; y++) border.push(y * W, y * W + W - 1);
+    const bins = new Map(); for (const i of border) { const k = i * 4, key = (src[k] >> 4) << 8 | (src[k + 1] >> 4) << 4 | src[k + 2] >> 4; let b = bins.get(key); if (!b) bins.set(key, b = [0, 0, 0, 0]); b[0]++; b[1] += src[k]; b[2] += src[k + 1]; b[3] += src[k + 2]; }
+    let top = [0]; for (const b of bins.values()) if (b[0] > top[0]) top = b;
+    flood(border, top[1] / top[0], top[2] / top[0], top[3] / top[0]);
+  }
+  for (const s of seeds) { const i = s.y * W + s.x, k = i * 4; flood([i], src[k], src[k + 1], src[k + 2]); }
+  let a = new Float32Array(W * H); for (let i = 0; i < W * H; i++) a[i] = mask[i] ? 0 : 1;
+  for (let pass = 0; pass < (feather ? 2 : 0); pass++) {          // 邊緣柔化：只讓邊界變淡，不會把背景補回來
+    const r = feather, t = new Float32Array(W * H), b = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) { let s = 0; const row = y * W; for (let x = -r; x < W; x++) { if (x + r < W) s += a[row + x + r]; if (x - r - 1 >= 0) s -= a[row + x - r - 1]; if (x >= 0) t[row + x] = s / (Math.min(W - 1, x + r) - Math.max(0, x - r) + 1); } }
+    for (let x = 0; x < W; x++) { let s = 0; for (let y = -r; y < H; y++) { if (y + r < H) s += t[(y + r) * W + x]; if (y - r - 1 >= 0) s -= t[(y - r - 1) * W + x]; if (y >= 0) b[y * W + x] = s / (Math.min(H - 1, y + r) - Math.max(0, y - r) + 1); } }
+    for (let i = 0; i < W * H; i++) a[i] = Math.min(a[i], b[i]);
+  }
+  let removed = 0; for (let i = 0; i < W * H; i++) { if (mask[i]) removed++; out.data[i * 4 + 3] = Math.round(src[i * 4 + 3] * a[i]); }
+  return { out, ratio: removed / (W * H) };
+}
+tool({ id: 'rmbg', group: '圖片', title: '去背景', desc: '把圖片的背景變成透明，輸出 PNG。依顏色判斷背景，適合白底或單色背景的商品圖、簽名、圖示與掃描文件。', build(sec) {
+  const status = h('div', { class: 'status', role: 'status' }), cv = h('canvas', { class: 'rmcv', 'aria-label': '去背結果預覽' }), box = h('div', { class: 'pv chk rmbox' }, cv), opt = h('div', {});
+  let file = null, orig = null, result = null, seeds = [], showOrig = false, t = 0;
+  opt.append(chk('edge', '自動去除與圖片邊緣相連的背景', true), field('顏色容許範圍', h('div', { class: 'row' }, inp('tol', 'range', 18, { min: 1, max: 100, style: 'flex:1' }), h('span', { class: 'num', id: uid() }, '18'))),
+    field('邊緣柔化', sel('feather', [['0', '不柔化'], ['1', '輕微'], ['2', '中等'], ['3', '明顯']], '1')),
+    h('p', { class: 'hint' }, '在預覽圖上點一下，可以把那個位置相連的同色區域也去掉（例如被主體圍住的背景）。背景去太多就把容許範圍調小。'));
+  const paint = () => { if (!orig) return; cv.width = orig.width; cv.height = orig.height; cv.getContext('2d').putImageData(showOrig || !result ? orig : result.out, 0, 0); box.classList.toggle('chk', !showOrig); };
+  const run = () => { if (!orig) return; setStatus(status, 'busy', '處理中…'); clearTimeout(t); t = setTimeout(() => { result = removeBackground(orig, { tol: +val(opt, 'tol'), feather: +val(opt, 'feather'), seeds, edge: val(opt, 'edge') }); paint(); setStatus(status, 'ok', `已去除 ${Math.round(result.ratio * 100)}% 的畫面。${seeds.length ? `另外點選了 ${seeds.length} 處。` : ''}`); }, 30); };
+  opt.addEventListener('input', () => { $('.num', opt).textContent = val(opt, 'tol'); run(); });
+  cv.addEventListener('click', e => { if (!orig || showOrig) return; const r = cv.getBoundingClientRect(); seeds.push({ x: Math.min(orig.width - 1, Math.floor((e.clientX - r.left) * orig.width / r.width)), y: Math.min(orig.height - 1, Math.floor((e.clientY - r.top) * orig.height / r.height)) }); run(); });
+  const load = async (f, sample) => {
+    const bmp = await decodeImage(f), c = h('canvas'); c.width = bmp.width; c.height = bmp.height; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(bmp, 0, 0);
+    file = f; orig = x.getImageData(0, 0, c.width, c.height); seeds = []; showOrig = false; toggle.textContent = '看原圖'; tag.hidden = !sample; run();
+  };
+  const blobOf = () => new Promise(r => { const c = h('canvas'); c.width = orig.width; c.height = orig.height; c.getContext('2d').putImageData(result.out, 0, 0); c.toBlob(r, 'image/png'); });
+  const need = () => { if (!result) throw new Error('請先加入圖片。'); };
+  const guard = fn => async () => { try { need(); await fn(); } catch (e) { setStatus(status, 'err', e.message); } };
+  const toggle = h('button', { class: 'btn sm', onclick: guard(() => { showOrig = !showOrig; toggle.textContent = showOrig ? '看去背結果' : '看原圖'; paint(); }) }, '看原圖');
+  const tag = h('span', { class: 'tag', hidden: true }, '範例');
+  sec.append(h('div', { class: 'cols' },
+    h('div', {}, dropzone('加入圖片', '.jpg,.jpeg,.png,.webp,.gif,.bmp,image/*', async fs => { const f = fs.find(isRaster); if (!f) return setStatus(status, 'err', '請加入 JPG、PNG 或 WebP 圖片。'); try { await load(f); } catch (e) { setStatus(status, 'err', e.message); } }, false),
+      h('div', { class: 'toolbar' }, toggle, h('button', { class: 'btn sm', onclick: guard(async () => openViewer(URL.createObjectURL(await blobOf()), '去背結果', true)) }, '放大檢視'),
+        h('button', { class: 'btn sm', onclick: guard(() => { seeds = []; run(); }) }, '清除點選'), tag), box),
+    h('div', { class: 'side' }, h('div', { class: 'panel' }, h('h2', {}, '設定'), opt,
+      h('button', { class: 'btn pri', onclick: guard(async () => setStatus(status, 'ok', await saveFile(stem(file.name) + '-nobg.png', await blobOf()))) }, '下載透明背景 PNG'), status))));
+  // 範例：白底上的印章圖樣
+  const s = h('canvas'); s.width = 560; s.height = 360; const x = s.getContext('2d'); x.fillStyle = '#fbfaf7'; x.fillRect(0, 0, 560, 360);
+  x.strokeStyle = '#b3261e'; x.lineWidth = 10; x.beginPath(); x.arc(280, 180, 130, 0, 7); x.stroke(); x.lineWidth = 3; x.beginPath(); x.arc(280, 180, 112, 0, 7); x.stroke();
+  x.fillStyle = '#b3261e'; x.font = '700 64px "Noto Serif TC",serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('頁匠', 280, 160); x.font = '500 24px "Noto Sans TC",sans-serif'; x.fillText('SAMPLE', 280, 220);
+  s.toBlob(async b => load({ name: '範例印章.png', type: 'image/png', bytes: new Uint8Array(await b.arrayBuffer()) }, true).catch(console.warn), 'image/png');
+} });
 
-/* ═════════ 7. 調整頁面大小 ═════════ */
-const SIZES = { A3: [297, 420], A4: [210, 297], A5: [148, 210], B5: [176, 250], Letter: [215.9, 279.4], Legal: [215.9, 355.6] };
-batchTool({ id: 'resize', group: '頁面', title: '調整頁面大小', desc: '把所有頁面改成指定的紙張尺寸，原內容會等比縮放並置中。', action: '調整並輸出 PDF', zipName: 'resized-pdfs.zip',
-  options(o) {
-    const custom = h('div', { hidden: true }, field('單位', sel('unit', [['mm', '公釐（mm）'], ['in', '英寸（in）']])), h('div', { class: 'two' }, field('寬度', inp('cw', 'number', 210, { min: 1, step: 'any' })), field('高度', inp('ch', 'number', 297, { min: 1, step: 'any' }))));
-    const ori = field('方向', sel('ori', [['p', '直向'], ['l', '橫向']]));
-    const s = sel('preset', [...Object.keys(SIZES).map(k => [k, `${k}（${SIZES[k][0]} × ${SIZES[k][1]} mm）`]), ['custom', '自訂大小']], 'A4'); s.onchange = () => { custom.hidden = s.value !== 'custom'; ori.hidden = s.value === 'custom'; };
-    o.append(field('預設大小', s), ori, custom);
-  },
-  async run(f, o) {
-    let W, H; const preset = val(o, 'preset');
-    if (preset === 'custom') { const k = val(o, 'unit') === 'in' ? 72 : 72 / 25.4; W = +val(o, 'cw') * k; H = +val(o, 'ch') * k; if (!(W >= 10 && H >= 10 && W <= 14400 && H <= 14400)) throw new Error('請輸入有效的尺寸'); }
-    else { const [a, b] = SIZES[preset].map(v => v * 72 / 25.4); [W, H] = val(o, 'ori') === 'l' ? [b, a] : [a, b]; }
-    const src = await openLib(f.bytes), out = await PDFDocument.create();
-    for (const sp of src.getPages()) { const [emb] = await out.embedPages([sp]); fitEmbedded(out.addPage([W, H]), emb, rotOf(sp), W, H); }
-    for (const k of ['Title', 'Author', 'Subject', 'Keywords']) { const v = src.getInfoDict().get(PDFName.of(k)); if (v) out.getInfoDict().set(PDFName.of(k), v); }
-    return [{ name: stem(f.name) + '-resized.pdf', bytes: await out.save() }];
-  } });
-
-/* ═════════ 8. 物件畫板 ═════════ */
+/* ═════════ 物件畫板 ═════════ */
 tool({ id: 'board', group: '圖片', title: '物件畫板', desc: '在圖片上加文字、圖形、箭頭與筆跡，每個物件之後都能再調整。', full: true, build(sec) {
   const host = h('div', { class: 'boardhost' }); sec.append(host);
   initBoard(host, { saveFile, isActive: () => sec.classList.contains('on') });
 } });
 
-/* ═════════ 9. SVG 轉 PNG ═════════ */
+/* ═════════ SVG 轉 PNG ═════════ */
 const CJK_STACK = `'Noto Sans TC', 'Microsoft JhengHei', '微軟正黑體', 'PingFang TC', 'Heiti TC', 'Source Han Sans TC', sans-serif`;
 function fixSvg(raw, strategy) {
   const doc = new DOMParser().parseFromString(raw, 'image/svg+xml');
@@ -557,7 +625,7 @@ tool({ id: 'svg', group: '圖片', title: 'SVG 轉 PNG', desc: '把 SVG 轉成�
         h('button', { class: 'btn sm' + (it.mode === 'svg' ? ' on' : ''), 'aria-pressed': it.mode === 'svg', onclick: () => { it.mode = 'svg'; draw(); } }, '原始 SVG'),
         h('button', { class: 'btn sm pri', disabled: !!it.err, onclick: async () => { try { setStatus(status, 'ok', await saveFile(outName(it), it.bytes)); } catch (e) { setStatus(status, 'err', e.message); } } }, '下載'),
         h('button', { class: 'btn sm', 'aria-label': '移除 ' + it.name, onclick: () => { items.splice(items.indexOf(it), 1); draw(); } }, '移除')),
-      it.err ? null : h('div', { class: 'pv' + (st.bg === 'transparent' ? ' chk' : '') }, h('img', { src: it.mode === 'svg' ? it.svgUrl : it.url, alt: it.name })))));
+      it.err ? null : h('div', { class: 'pv' + (st.bg === 'transparent' ? ' chk' : '') }, h('img', { src: it.mode === 'svg' ? it.svgUrl : it.url, alt: it.name, title: '點一下放大檢視', style: 'cursor:zoom-in', onclick: () => it.mode === 'svg' ? openViewer(it.svgUrl, it.name + '.svg', true) : viewBytes(outName(it), it.bytes) })))));
     if (!items.length) cards.append(h('p', { class: 'hint' }, '尚未加入 SVG。'));
   };
   const renderItem = async it => { try { const st = settings(), f = fixSvg(it.raw, st.font), r = await svgToPng(f, st); if (it.url) URL.revokeObjectURL(it.url); Object.assign(it, { w: f.w, h: f.h, ...r, url: URL.createObjectURL(new Blob([r.bytes], { type: 'image/png' })), err: null }); } catch (e) { it.err = e.message; } };
@@ -569,7 +637,7 @@ tool({ id: 'svg', group: '圖片', title: 'SVG 轉 PNG', desc: '把 SVG 轉成�
   const syncLive = () => {
     const code = pasteCode.value.trim(), st = settings(); live.classList.toggle('chk', st.bg === 'transparent'); live.style.background = st.bg === 'transparent' ? '' : st.bg;
     if (!code) { live.replaceChildren(h('p', { class: 'hint' }, '在左邊貼上或輸入 SVG，這裡會同步顯示。')); liveInfo.textContent = ''; liveInfo.className = 'hint'; return; }
-    try { const f = fixSvg(code, st.font), img = h('img', { alt: 'SVG 即時預覽', src: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(f.svg) });
+    try { const f = fixSvg(code, st.font), url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(f.svg), img = h('img', { alt: 'SVG 即時預覽', src: url, title: '點一下放大檢視', style: 'cursor:zoom-in', onclick: () => openViewer(url, pasteName.value || 'SVG 預覽', true) });
       img.onerror = () => { liveInfo.textContent = '瀏覽器無法繪製這段 SVG。'; liveInfo.className = 'hint bad'; };
       live.replaceChildren(img); liveInfo.textContent = `${f.w} × ${f.h} px，${fmtSize(new Blob([code]).size)}`; liveInfo.className = 'hint'; }
     catch (e) { liveInfo.textContent = e.message; liveInfo.className = 'hint bad'; }

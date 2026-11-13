@@ -84,12 +84,12 @@ h1{font:700 22px var(--font-display);margin:0 0 2px;text-wrap:balance}
 .hint{font-size:12px;color:var(--muted);margin:6px 0 0}
 .warnbox{font-size:12px;color:var(--warn);border-left:3px solid var(--warn);padding:2px 8px;margin:8px 0}
 .toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:12px 0}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--thumb,150px),1fr));gap:10px}
 .pg{background:var(--surface);border:1.5px solid var(--line);border-radius:8px;padding:6px;display:flex;flex-direction:column;gap:4px;cursor:pointer;user-select:none}
 .pg.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
 .pg.dragover{border-style:dashed;border-color:var(--accent)}
-.pg .th{height:150px;display:flex;align-items:center;justify-content:center;background:var(--sunken);border-radius:5px;overflow:hidden}
-.pg canvas,.pg .blank{max-width:100%;max-height:140px;background:#fff;box-shadow:0 0 0 1px var(--line);transition:transform .15s}
+.pg .th{height:calc(var(--thumb,150px) * 1.2);display:flex;align-items:center;justify-content:center;background:var(--sunken);border-radius:5px;overflow:hidden}
+.pg canvas,.pg .blank{max-width:100%;max-height:calc(var(--thumb,150px) * 1.2 - 10px);background:#fff;box-shadow:0 0 0 1px var(--line);transition:transform .15s}
 .pg .blank{width:96px;height:136px}
 .pg .cap{font-size:11px;color:var(--muted);display:flex;justify-content:space-between;gap:4px}
 .pg .cap span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -100,6 +100,22 @@ h1{font:700 22px var(--font-display);margin:0 0 2px;text-wrap:balance}
 .sw{display:flex;gap:6px;flex-wrap:wrap}
 .sw button{width:22px;height:22px;border-radius:50%;border:2px solid var(--surface);box-shadow:0 0 0 1px var(--line);cursor:pointer;padding:0}
 .sigprev{max-width:100%;max-height:70px;background:#fff;border:1px solid var(--line);border-radius:6px;display:block;margin:6px 0}
+aside{transition:width .15s}
+.top{display:flex;align-items:flex-start;justify-content:space-between;gap:6px;padding-right:10px}
+.top #navtoggle{margin-top:18px;flex:none}
+body.navc aside{width:46px;overflow:hidden}
+body.navc .brand,body.navc nav,body.navc .note{display:none}
+body.navc .top{padding:0;justify-content:center}body.navc .top #navtoggle{margin-top:12px}
+.viewer{position:fixed;inset:0;z-index:50;background:rgba(10,12,18,.88);display:flex;flex-direction:column}
+.viewer[hidden]{display:none}
+.vbar{display:flex;gap:6px;align-items:center;padding:8px 12px;background:var(--surface);border-bottom:1px solid var(--line)}
+.vttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.vpct{min-width:48px;text-align:center}
+.vpane{flex:1;overflow:auto;padding:16px;cursor:grab;display:grid;place-items:safe center;touch-action:none}
+.vpane.grab{cursor:grabbing}
+.vpane img{display:block;max-width:none;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.5);user-select:none;-webkit-user-drag:none}
+.vpane.chk img{background:repeating-conic-gradient(#d5d8e0 0 25%,#fff 0 50%) 0 0/20px 20px}
+.rmbox{padding:12px;border:1px solid var(--line);border-radius:10px}
+.rmcv{max-width:100%;max-height:70vh;display:block;margin:0 auto;cursor:crosshair}
 main.full{padding:0;overflow:hidden}
 .tool.full.on{display:flex;height:100%}
 .boardhost{flex:1;min-width:0;min-height:0}
@@ -122,16 +138,17 @@ main.full{padding:0;overflow:hidden}
   main.full{overflow:visible}.tool.full.on{height:82vh;min-height:520px}
   body{flex-direction:column}
   aside{width:auto;border-right:0;border-bottom:1px solid var(--line);overflow:visible}
+  body.navc aside{width:auto}body.navc .brand{display:block}body.navc .top{padding-right:10px;justify-content:space-between}body.navc .top #navtoggle{margin-top:18px}
   nav{flex-direction:row;flex-wrap:wrap}.note{display:none} nav .grp{width:100%;padding-top:6px}
   main{overflow:visible;padding:16px}
   .cols{grid-template-columns:1fr}
 }
-@media (prefers-reduced-motion: reduce){.pg canvas{transition:none}}
+@media (prefers-reduced-motion: reduce){.pg canvas,aside{transition:none}}
 </style>
 </head>
 <body>
 <aside>
-  <div class="brand">頁匠<small>本機處理的文件與圖片工具箱</small></div>
+  <div class="top"><div class="brand">頁匠<small>本機處理的文件與圖片工具箱</small></div><button id="navtoggle" class="btn sm" type="button" aria-controls="nav" aria-expanded="true" aria-label="收起側邊欄" title="收起側邊欄">«</button></div>
   <nav id="nav" aria-label="工具"></nav>
   <div class="note">檔案只在這個瀏覽器分頁內處理，不會上傳。</div>
 </aside>
