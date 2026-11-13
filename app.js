@@ -500,6 +500,36 @@ batchTool({ id: 'watermark', group: 'PDF', title: '浮水印', desc: '在每一�
     return [{ name: stem(f.name) + '-watermarked.pdf', bytes: await doc.save() }];
   } });
 
+/* ═════════ PDF 轉灰階 ═════════ */
+batchTool({ id: 'gray', group: 'PDF', title: 'PDF 轉灰階', desc: '把彩色 PDF 變成黑白灰階，適合列印前省彩色墨水，或統一文件外觀。', action: '轉成灰階', zipName: 'grayscale-pdfs.zip',
+  options(o) {
+    const dpi = field('影像解析度', sel('dpi', [['100', '100 dpi（檔案小）'], ['150', '150 dpi（一般）'], ['200', '200 dpi（清晰）'], ['300', '300 dpi（列印）']], '150')); dpi.hidden = true;
+    const mode = sel('mode', [['overlay', '保留文字（可選取、可搜尋）'], ['raster', '整頁轉成灰階影像']]); mode.onchange = () => { dpi.hidden = mode.value !== 'raster'; note.textContent = NOTES[mode.value]; };
+    const NOTES = { overlay: '在每頁疊上一層去色效果，文字和向量圖形維持原樣、檔案幾乎不變大。原本的色彩資料仍留在檔案裡，註解與表單欄位不會變灰，少數舊版閱讀器可能仍顯示彩色。', raster: '每一頁都重新繪製成灰階圖片，任何閱讀器和印表機看到的都是灰階，檔案裡不再有彩色資料。文字會變成圖片，無法選取或搜尋，檔案通常會變大。' };
+    const note = h('p', { class: 'hint' }, NOTES.overlay);
+    o.append(field('轉換方式', mode), dpi, field('頁面範圍', inp('range', 'text', '', { placeholder: '留空代表全部頁面，例如 1-3, 5' })), note);
+  },
+  async run(f, o, say) {
+    const src = await openLib(f.bytes), n = src.getPageCount(), idx = parseRange(val(o, 'range'), n), name = stem(f.name) + '-gray.pdf';
+    if (!idx.length) throw new Error('頁面範圍內沒有任何頁面。');
+    if (val(o, 'mode') === 'overlay') {
+      const pages = src.getPages();
+      for (const i of idx) { const p = pages[i], b = p.getMediaBox(); p.drawRectangle({ x: b.x, y: b.y, width: b.width, height: b.height, color: rgb(.5, .5, .5), borderWidth: 0, blendMode: PDFLib.BlendMode.Color }); }
+      return [{ name, bytes: await src.save() }];
+    }
+    const pj = await openPdfjs(f.bytes), out = await PDFDocument.create(), scale = +val(o, 'dpi') / 72, set = new Set(idx);
+    const keep = [...Array(n).keys()].filter(i => !set.has(i)), copied = await out.copyPages(src, keep), byIdx = new Map(keep.map((k, j) => [k, copied[j]]));
+    for (let i = 0; i < n; i++) {
+      if (byIdx.has(i)) { out.addPage(byIdx.get(i)); continue; }
+      say(`第 ${i + 1}/${n} 頁`); const c = await renderCanvas(pj, i + 1, { scale }), x = c.getContext('2d'), d = x.getImageData(0, 0, c.width, c.height), px = d.data;
+      for (let k = 0; k < px.length; k += 4) px[k] = px[k + 1] = px[k + 2] = Math.round(.299 * px[k] + .587 * px[k + 1] + .114 * px[k + 2]);
+      x.putImageData(d, 0, 0);
+      const img = await out.embedJpg(await canvasBytes(c, 'image/jpeg', .9)), w = c.width / scale, hh = c.height / scale;
+      out.addPage([w, hh]).drawImage(img, { x: 0, y: 0, width: w, height: hh });
+    }
+    return [{ name, bytes: await out.save() }];
+  } });
+
 /* ═════════ 去背景 ═════════ */
 // 以顏色相近程度判斷背景：從圖片邊緣（及使用者點選的位置）往內擴散，適合純色或接近純色的背景
 function removeBackground(img, { tol, feather, seeds, edge }) {
