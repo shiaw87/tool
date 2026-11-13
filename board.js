@@ -21,7 +21,7 @@ const ICON={
 const ico=k=>`<svg class="i" viewBox="0 0 24 24">${ICON[k]}</svg>`;
 const TOOLS=[['select','選取 (V)'],['text','文字 (T)'],['rect','矩形 (R)'],['ellipse','橢圓 (O)'],['line','直線 (L)'],['arrow','箭頭 (A)'],['pen','畫筆 (P)'],['marker','螢光筆 (M)'],['image','加入圖片']];
 const TOOLNAME={select:'選取',text:'文字',rect:'矩形',ellipse:'橢圓',line:'直線',arrow:'箭頭',pen:'畫筆',marker:'螢光筆',image:'圖片'};
-const HINT={select:'點一下選取，拖曳移動，拉控制點縮放或旋轉。雙擊文字可修改。拖空白處或滾輪可平移，Ctrl＋滾輪縮放。',
+const HINT={select:'點一下選取，拖曳移動，拉控制點縮放或旋轉。雙擊文字可修改，雙擊圖片可裁剪。拖空白處或滾輪可平移，Ctrl＋滾輪縮放。',
  text:'在畫布上點一下，直接打字。',rect:'拖曳畫出矩形，按住 Shift 畫正方形。',ellipse:'拖曳畫出橢圓，按住 Shift 畫正圓。',
  line:'拖曳畫出直線，按住 Shift 對齊 45°。',arrow:'拖曳畫出箭頭，按住 Shift 對齊 45°。',pen:'直接畫。每一筆都是獨立物件，之後還能移動、改色、刪除。',marker:'半透明的粗筆，用來標重點。',image:''};
 
@@ -29,6 +29,7 @@ const S={doc:{w:1200,h:750,bg:'#ffffff',transparent:false},objs:[],sel:null,tool
  style:{stroke:'#e03131',fill:'none',sw:6,fontSize:48,family:'sans',bold:false,italic:false,color:'#1b2033',bg:'none',align:'left'},
  marker:{stroke:'#ffd43b',sw:28}};
 const assets={};
+let cropping=null;
 let uid=1,editing=null,drag=null,pristine=true,spaceDown=false,clip=null,raf=0,downloads=null;
 let hist=[],hi=-1;
 const nid=()=>'o'+(uid++)+Math.random().toString(36).slice(2,6);
@@ -64,7 +65,7 @@ function drawObj(c,o,forExport){
   }else{c.beginPath();c.moveTo(o.x1,o.y1);c.lineTo(o.x2,o.y2);c.stroke()}
   c.restore();return}
  c.translate(o.cx,o.cy);c.rotate(o.rot||0);const w=o.w,h=o.h;
- if(o.type==='image'){const a=assets[o.asset];if(a&&a.img.complete&&a.img.naturalWidth){if(o.flip)c.scale(-1,1);c.drawImage(a.img,-w/2,-h/2,w,h)}
+ if(o.type==='image'){const a=assets[o.asset];if(a&&a.img.complete&&a.img.naturalWidth){if(o.flip)c.scale(-1,1);const cr=o.crop,iw=a.img.naturalWidth,ih=a.img.naturalHeight;if(cr)c.drawImage(a.img,cr.x*iw,cr.y*ih,cr.w*iw,cr.h*ih,-w/2,-h/2,w,h);else c.drawImage(a.img,-w/2,-h/2,w,h)}
   else{c.fillStyle='#cfd3de';c.fillRect(-w/2,-h/2,w,h)}}
  else if(o.type==='rect'||o.type==='ellipse'){c.beginPath();
   if(o.type==='ellipse')c.ellipse(0,0,Math.max(w/2,.1),Math.max(h/2,.1),0,0,Math.PI*2);
@@ -101,14 +102,16 @@ function paint(){
  const z=S.zoom,ax=S.pan.x,ay=S.pan.y,aw=S.doc.w*z,ah=S.doc.h*z;
  ctx.save();ctx.translate(ax,ay);ctx.scale(z,z);
  ctx.fillStyle=S.doc.transparent?getChecker():S.doc.bg;ctx.fillRect(0,0,S.doc.w,S.doc.h);
- for(const o of S.objs)drawObj(ctx,o);
+ for(const o of S.objs){if(cropping&&cropping.id===o.id)drawCrop(ctx,o);else drawObj(ctx,o)}
  if(drag&&drag.mode==='pen'){const st=styleFor(S.tool);ctx.globalAlpha=S.tool==='marker'?.4:1;ctx.lineCap=ctx.lineJoin='round';ctx.strokeStyle=st.stroke;ctx.lineWidth=st.sw;
   ctx.beginPath();drag.pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));if(drag.pts.length===1)ctx.lineTo(drag.pts[0][0]+.01,drag.pts[0][1]);ctx.stroke();ctx.globalAlpha=1}
  ctx.restore();
  ctx.save();ctx.globalAlpha=.8;ctx.fillStyle=work;ctx.beginPath();ctx.rect(0,0,W,H);ctx.rect(ax,ay,aw,ah);ctx.fill('evenodd');ctx.restore();
  ctx.strokeStyle='rgba(120,128,150,.6)';ctx.lineWidth=1;ctx.strokeRect(Math.round(ax)-.5,Math.round(ay)-.5,Math.round(aw)+1,Math.round(ah)+1);
  const o=selObj();
- if(o&&editing!==o.id){ctx.strokeStyle=acc;ctx.lineWidth=1.5;
+ if(cropping){const hs=cropHandles();ctx.strokeStyle=acc;ctx.lineWidth=1.5;ctx.beginPath();[0,2,4,6].forEach((k,i)=>i?ctx.lineTo(hs[k].s[0],hs[k].s[1]):ctx.moveTo(hs[k].s[0],hs[k].s[1]));ctx.closePath();ctx.stroke();
+  for(const hd of hs){ctx.beginPath();ctx.rect(hd.s[0]-5,hd.s[1]-5,10,10);ctx.fillStyle='#fff';ctx.fill();ctx.stroke()}}
+ else if(o&&editing!==o.id){ctx.strokeStyle=acc;ctx.lineWidth=1.5;
   if(isBox(o)){const c=corners(o);if(o.locked)ctx.setLineDash([5,4]);ctx.beginPath();c.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.stroke();ctx.setLineDash([])}
   if(!o.locked)for(const hd of handles(o)){
    if(hd.mode==='rotate'){ctx.beginPath();ctx.moveTo(hd.from[0],hd.from[1]);ctx.lineTo(hd.s[0],hd.s[1]);ctx.stroke()}
@@ -119,6 +122,22 @@ function paint(){
 function fit(){const W=stage.clientWidth,H=stage.clientHeight,m=W<500?20:56;
  S.zoom=clamp(Math.min((W-m*2)/S.doc.w,(H-m*2)/S.doc.h),.02,8);S.pan.x=(W-S.doc.w*S.zoom)/2;S.pan.y=(H-S.doc.h*S.zoom)/2;render()}
 function zoomAt(sx,sy,f){const z=clamp(S.zoom*f,.02,16),w=s2w(sx,sy);S.zoom=z;S.pan.x=sx-w.x*z;S.pan.y=sy-w.y*z;render()}
+
+/* ---------- image cropping ---------- */
+// o.crop 以原圖比例記錄保留的範圍；裁剪時 F 是整張圖在畫布上的位置，r 是畫面上保留的範圍（0–1）
+function startCrop(o){if(!o||o.type!=='image'||o.locked)return;if(S.tool!=='select')setTool('select');S.sel=o.id;
+ const c=o.crop||{x:0,y:0,w:1,h:1},fw=o.w/c.w,fh=o.h/c.h,dx=o.flip?1-(c.x+c.w):c.x,off=rot((dx+c.w/2-.5)*fw,(c.y+c.h/2-.5)*fh,o.rot);
+ cropping={id:o.id,F:{cx:o.cx-off[0],cy:o.cy-off[1],w:fw,h:fh,rot:o.rot},r:{x0:dx,y0:c.y,x1:dx+c.w,y1:c.y+c.h}};$('#hint').textContent='拖曳邊框或控制點調整要保留的範圍，拖曳框內可移動。Enter 完成，Esc 取消。';refreshPanel();render()}
+function endCrop(apply){if(!cropping)return;const o=byId(cropping.id),{F,r}=cropping;cropping=null;$('#hint').textContent=HINT[S.tool]||'';
+ if(o&&apply){const w=r.x1-r.x0,hh=r.y1-r.y0;if(w>.999&&hh>.999)delete o.crop;else o.crop={x:o.flip?1-r.x1:r.x0,y:r.y0,w,h:hh};
+  o.w=w*F.w;o.h=hh*F.h;const off=rot(((r.x0+r.x1)/2-.5)*F.w,((r.y0+r.y1)/2-.5)*F.h,F.rot);o.cx=F.cx+off[0];o.cy=F.cy+off[1];done()}
+ else{refreshPanel();render()}}
+function cropHandles(){const{F,r}=cropping,P=(fx,fy)=>{const q=rot((fx-.5)*F.w,(fy-.5)*F.h,F.rot);return w2s(F.cx+q[0],F.cy+q[1])},mx=(r.x0+r.x1)/2,my=(r.y0+r.y1)/2;
+ return[[r.x0,r.y0,-1,-1],[mx,r.y0,0,-1],[r.x1,r.y0,1,-1],[r.x1,my,1,0],[r.x1,r.y1,1,1],[mx,r.y1,0,1],[r.x0,r.y1,-1,1],[r.x0,my,-1,0]].map(([fx,fy,hx,hy])=>({hx,hy,s:P(fx,fy)}))}
+function cropFrac(p){const{F}=cropping,l=rot(p.x-F.cx,p.y-F.cy,-F.rot);return{x:l[0]/F.w+.5,y:l[1]/F.h+.5}}
+function drawCrop(c,o){const a=assets[o.asset],{F,r}=cropping;if(!a||!a.img.naturalWidth)return;c.save();c.translate(F.cx,F.cy);c.rotate(F.rot);
+ const im=()=>{c.save();if(o.flip)c.scale(-1,1);c.drawImage(a.img,-F.w/2,-F.h/2,F.w,F.h);c.restore()};
+ c.globalAlpha=.28;im();c.globalAlpha=o.opacity==null?1:o.opacity;c.beginPath();c.rect((r.x0-.5)*F.w,(r.y0-.5)*F.h,(r.x1-r.x0)*F.w,(r.y1-r.y0)*F.h);c.clip();im();c.restore()}
 
 /* ---------- hit testing ---------- */
 function local(o,p){const r=rot(p.x-o.cx,p.y-o.cy,-o.rot);return{x:r[0],y:r[1]}}
@@ -141,7 +160,7 @@ function hitHandle(o,s,r=11){let best=null,bd=r;for(const hd of handles(o)){cons
 /* ---------- history ---------- */
 const snap=()=>JSON.stringify({doc:S.doc,objs:S.objs});
 function commit(){const s=snap();if(hist[hi]===s)return;hist.length=hi+1;hist.push(s);if(hist.length>120)hist.shift();hi=hist.length-1;pristine=false;updateBar()}
-function restore(i){hi=i;const d=JSON.parse(hist[hi]);S.doc=d.doc;S.objs=d.objs;if(!selObj())S.sel=null;S.objs.forEach(o=>{if(o.type==='text')ensureFont(o)});updateBar();refreshPanel();render()}
+function restore(i){cropping=null;hi=i;const d=JSON.parse(hist[hi]);S.doc=d.doc;S.objs=d.objs;if(!selObj())S.sel=null;S.objs.forEach(o=>{if(o.type==='text')ensureFont(o)});updateBar();refreshPanel();render()}
 function updateBar(){$('#btnUndo').disabled=hi<=0;$('#btnRedo').disabled=hi>=hist.length-1;$('#sample').classList.toggle('hide',!pristine)}
 function done(){commit();refreshPanel();render()}
 
@@ -153,7 +172,7 @@ function shift(o,dx,dy){if(o.type==='line'){o.x1+=dx;o.x2+=dx;o.y1+=dy;o.y2+=dy}
 function addCopy(src,off){const o=clone(src);o.id=nid();o.locked=false;shift(o,off,off);S.objs.push(o);S.sel=o.id;done()}
 function order(how){const o=selObj();if(!o)return;const a=S.objs,i=a.indexOf(o);a.splice(i,1);
  a.splice(how==='top'?a.length:how==='bottom'?0:clamp(i+(how==='up'?1:-1),0,a.length),0,o);done()}
-function setTool(t){if(t==='image'){$('#fileImg').click();return}S.tool=t;if(t!=='select')S.sel=null;
+function setTool(t){if(cropping&&t!=='select')endCrop(true);if(t==='image'){$('#fileImg').click();return}S.tool=t;if(t!=='select')S.sel=null;
  root.querySelectorAll('.tool').forEach(b=>b.classList.toggle('on',b.dataset.t===t));$('#hint').textContent=HINT[t]||'';
  cv.style.cursor=t==='select'?'default':t==='text'?'text':'crosshair';refreshPanel();render()}
 function clearAll(){S.objs=[];S.sel=null;pristine=false;hist.length=hi+1;done();updateBar()}
@@ -178,8 +197,8 @@ async function openProject(f){
 function exportCanvas(){const c=document.createElement('canvas');c.width=Math.max(1,Math.round(S.doc.w));c.height=Math.max(1,Math.round(S.doc.h));const x=c.getContext('2d');
  if(!S.doc.transparent){x.fillStyle=S.doc.bg;x.fillRect(0,0,c.width,c.height)}for(const o of S.objs)drawObj(x,o,true);return c}
 async function save(filename,data){try{toast(await saveFile(filename,data));return true}catch(e){toast(e.message||'無法儲存');return false}}
-function exportPNG(){exportCanvas().toBlob(async b=>{if(!b){toast('匯出失敗，畫布可能太大。');return}await save('物件畫板.png',b)},'image/png')}
-async function saveProject(){const used={};S.objs.forEach(o=>{if(o.type==='image'&&assets[o.asset])used[o.asset]=assets[o.asset].src});
+function exportPNG(){if(cropping)endCrop(true);exportCanvas().toBlob(async b=>{if(!b){toast('匯出失敗，畫布可能太大。');return}await save('物件畫板.png',b)},'image/png')}
+async function saveProject(){if(cropping)endCrop(true);const used={};S.objs.forEach(o=>{if(o.type==='image'&&assets[o.asset])used[o.asset]=assets[o.asset].src});
  await save('物件畫板專案.json',new Blob([JSON.stringify({app:'object-board',v:1,doc:S.doc,objs:S.objs,assets:used})]))}
 let toastT=0;function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),3200)}
 
@@ -202,6 +221,9 @@ cv.addEventListener('pointerdown',e=>{
  const s=spt(e),p=s2w(s[0],s[1]);
  if(e.button===1||spaceDown){drag={mode:'pan',s,pan:{...S.pan}};e.preventDefault();return}
  if(e.button!==0)return;
+ if(cropping){let hd=null,bd=e.pointerType==='touch'?18:11;for(const k of cropHandles()){const d=Math.hypot(k.s[0]-s[0],k.s[1]-s[1]);if(d<=bd){bd=d;hd=k}}
+  const f=cropFrac(p),r=cropping.r;
+  if(hd)drag={mode:'crop',hd};else if(f.x>=r.x0&&f.x<=r.x1&&f.y>=r.y0&&f.y<=r.y1)drag={mode:'cropmove',f0:f,r0:{...r}};else drag={mode:'pan',s,pan:{...S.pan}};return}
  const t=S.tool,st=styleFor(t);
  if(t==='select'){
   const o=selObj();
@@ -219,6 +241,8 @@ cv.addEventListener('pointermove',e=>{
  const s=spt(e),p=s2w(s[0],s[1]);
  if(!drag){if(S.tool==='select'){const o=selObj(),hd=o&&!o.locked&&hitHandle(o,s);cv.style.cursor=spaceDown?'grab':hd?(hd.mode==='rotate'?'grab':'pointer'):hitTest(p)?'move':'default'}return}
  const d=drag,o=d.o,g=d.orig;
+ if(d.mode==='crop'){const f=cropFrac(p),r=cropping.r,m=.02;if(d.hd.hx<0)r.x0=clamp(f.x,0,r.x1-m);if(d.hd.hx>0)r.x1=clamp(f.x,r.x0+m,1);if(d.hd.hy<0)r.y0=clamp(f.y,0,r.y1-m);if(d.hd.hy>0)r.y1=clamp(f.y,r.y0+m,1);render();return}
+ if(d.mode==='cropmove'){const f=cropFrac(p),r=cropping.r,w=d.r0.x1-d.r0.x0,hh=d.r0.y1-d.r0.y0,x=clamp(d.r0.x0+f.x-d.f0.x,0,1-w),y=clamp(d.r0.y0+f.y-d.f0.y,0,1-hh);r.x0=x;r.x1=x+w;r.y0=y;r.y1=y+hh;render();return}
  if(d.mode==='pan'){S.pan.x=d.pan.x+s[0]-d.s[0];S.pan.y=d.pan.y+s[1]-d.s[1]}
  else if(d.mode==='move'){let dx=p.x-d.p0.x,dy=p.y-d.p0.y;if(!d.moved&&Math.hypot(dx,dy)*S.zoom<3)return;d.moved=true;if(o.locked)return;
   if(e.shiftKey){if(Math.abs(dx)>Math.abs(dy))dy=0;else dx=0}
@@ -240,7 +264,7 @@ cv.addEventListener('pointermove',e=>{
  render()});
 function endDrag(e){
  if(!drag)return;const d=drag,o=d.o;drag=null;
- if(d.mode==='pan'){render();return}
+ if(d.mode==='pan'||d.mode==='crop'||d.mode==='cropmove'){render();return}
  if(d.mode==='newtext'){const st=S.style,t={id:nid(),type:'text',text:'',fontSize:st.fontSize,family:st.family,bold:st.bold,italic:st.italic,color:st.color,bg:st.bg,align:st.align,cx:0,cy:0,w:0,h:0,rot:0,opacity:1};
   measure(t);t.cx=d.p.x+t.w/2;t.cy=d.p.y;S.objs.push(t);setTool('select');startEdit(t);return}
  if(d.mode==='create'){if(o.w*S.zoom<4&&o.h*S.zoom<4){o.w=Math.min(240,S.doc.w*.3);o.h=o.w*.62;o.cx=d.p0.x;o.cy=d.p0.y}o.w=Math.max(o.w,2);o.h=Math.max(o.h,2);setTool('select');S.sel=o.id}
@@ -251,13 +275,14 @@ function endDrag(e){
    pts:P.map(([x,y])=>[+(x1>x0?(x-x0)/w:.5).toFixed(4),+(y1>y0?(y-y0)/h:.5).toFixed(4)])})}
  done()}
 cv.addEventListener('pointerup',endDrag);cv.addEventListener('pointercancel',endDrag);
-cv.addEventListener('dblclick',e=>{if(S.tool!=='select')return;const s=spt(e),o=hitTest(s2w(s[0],s[1]));if(o&&o.type==='text')startEdit(o,true)});
+cv.addEventListener('dblclick',e=>{if(S.tool!=='select')return;const s=spt(e),o=hitTest(s2w(s[0],s[1]));if(cropping)return;if(o&&o.type==='text')startEdit(o,true);else if(o&&o.type==='image')startCrop(o)});
 cv.addEventListener('wheel',e=>{e.preventDefault();const s=spt(e);if(e.ctrlKey||e.metaKey)zoomAt(s[0],s[1],Math.exp(-e.deltaY*.01));else{S.pan.x-=e.deltaX;S.pan.y-=e.deltaY;render()}},{passive:false});
 
 /* ---------- keyboard, paste, drop ---------- */
 const inField=e=>/^(INPUT|TEXTAREA|SELECT)$/.test(((e.composedPath&&e.composedPath()[0])||e.target).tagName||'');
 document.addEventListener('keydown',e=>{
  if(!isActive()||inField(e))return;const k=e.key.toLowerCase(),mod=e.ctrlKey||e.metaKey,o=selObj();
+ if(cropping){if(k==='enter'){e.preventDefault();endCrop(true)}else if(k==='escape')endCrop(false);return}
  if(k===' '){spaceDown=true;e.preventDefault();return}
  if(mod&&k==='z'){e.preventDefault();if(e.shiftKey){if(hi<hist.length-1)restore(hi+1)}else if(hi>0)restore(hi-1);return}
  if(mod&&k==='y'){e.preventDefault();if(hi<hist.length-1)restore(hi+1);return}
@@ -294,7 +319,12 @@ function numCtl(id,value,min,max,apply){const inp=h('input',{type:'number',id,mi
  inp.onchange=()=>{const v=clamp(+inp.value||min,min,max);inp.value=v;apply(v);commit();refreshLayers();render()};return inp}
 const tog=(label,on,fn,title)=>h('button',{class:'btn'+(on?' on':''),title:title||label,'aria-pressed':on?'true':'false',onclick:()=>{fn();done()}},label);
 function refreshPanel(){
+ if(cropping&&S.sel!==cropping.id)return endCrop(true);
  const P=$('#props');P.textContent='';const o=selObj(),tool=S.tool;
+ if(cropping&&o){const sec=h('div',{class:'sec'});P.append(sec);sec.append(h('h2',{},'裁剪圖片'),h('div',{class:'name'},nameOf(o)),
+  h('p',{class:'note'},'拖曳邊框或控制點調整要保留的範圍，拖曳框內可移動。淡色的部分會被裁掉。'),
+  h('div',{class:'btns'},h('button',{class:'btn primary',onclick:()=>endCrop(true)},'完成裁剪'),h('button',{class:'btn',onclick:()=>endCrop(false)},'取消'),
+   h('button',{class:'btn',onclick:()=>{cropping.r={x0:0,y0:0,x1:1,y1:1};render()}},'選取整張')));refreshLayers();return}
  const kind=o?(o.type==='line'?'line':o.type):(tool==='arrow'?'line':tool==='marker'?'pen':tool);
  const t=o||styleFor(tool),drawing=o||!['select','image'].includes(tool);
  if(drawing){const sec=h('div',{class:'sec'});P.append(sec);
@@ -321,7 +351,7 @@ function refreshPanel(){
    if(isBox(o)){
     if(o.type!=='text')sec.append(row('尺寸','p-w',numCtl('p-w',o.w,2,20000,v=>{o.w=v}),numCtl('p-h',o.h,2,20000,v=>{o.h=v})));
     sec.append(row('旋轉','p-rot',numCtl('p-rot',((o.rot*180/Math.PI)%360+360)%360,0,360,v=>{o.rot=v*Math.PI/180}),h('span',{class:'val'},'度')))}
-   if(o.type==='image')sec.append(h('div',{class:'btns'},tog('左右翻轉',o.flip,()=>{o.flip=!o.flip}),
+   if(o.type==='image')sec.append(h('div',{class:'btns'},h('button',{class:'btn',onclick:()=>startCrop(o)},'裁剪'),o.crop?h('button',{class:'btn',onclick:()=>{startCrop(o);if(cropping){cropping.r={x0:0,y0:0,x1:1,y1:1};endCrop(true)}}},'還原裁剪'):null,tog('左右翻轉',o.flip,()=>{o.flip=!o.flip}),
     h('button',{class:'btn',onclick:()=>{S.doc.w=Math.round(o.w);S.doc.h=Math.round(o.h);o.cx=o.w/2;o.cy=o.h/2;o.rot=0;done();fit()}},'畫布改成這張圖的大小')));
    sec.append(h('div',{class:'btns'},
     h('button',{class:'btn',onclick:()=>order('top')},'移到最上'),h('button',{class:'btn',onclick:()=>order('up')},'上移一層'),
