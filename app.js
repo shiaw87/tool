@@ -647,16 +647,29 @@ tool({ id: 'svg', group: '圖片', title: 'SVG 轉 PNG', desc: '把 SVG 轉成�
   bgSel.style.flex = '1';
   const settings = () => ({ scale: +val(opt, 'scale'), pad: +val(opt, 'pad'), bg: val(opt, 'bg') === 'custom' ? custom.value : val(opt, 'bg'), font: val(opt, 'font') });
   const outName = it => `${it.name}_${val(opt, 'scale')}x.png`;
+  const okItems = () => items.filter(i => !i.err);
+  const saveOne = async it => { try { setStatus(status, 'ok', await saveFile(outName(it), it.bytes)); return true; } catch (e) { setStatus(status, 'err', e.message); return false; } };
+  const mainBtn = h('button', { class: 'btn pri', onclick: async () => {
+    const ok = okItems(); if (!ok.length) return setStatus(status, 'err', '沒有可下載的 PNG。');
+    if (ok.length === 1) return saveOne(ok[0]);
+    try { setStatus(status, 'ok', await saveFile(`svg-png-${val(opt, 'scale')}x.zip`, await zipOf(ok.map(i => ({ name: outName(i), bytes: i.bytes }))))); } catch (e) { setStatus(status, 'err', e.message); }
+  } }, '下載 PNG');
+  const eachBtn = h('button', { class: 'btn', hidden: true, onclick: async () => {
+    const ok = okItems(); let n = 0;
+    for (const it of ok) { if (!await saveOne(it)) return; n++; await new Promise(r => setTimeout(r, 350)); }
+    setStatus(status, 'ok', `已逐一下載 ${n} 個 PNG。若只存到第一個，請在瀏覽器允許此網站下載多個檔案。`);
+  } }, '逐一下載 PNG');
   const draw = () => {
     const st = settings();
     cards.replaceChildren(...items.map(it => h('div', { class: 'card' },
       h('div', { class: 'cardhead' }, h('div', { class: 'nm' }, h('b', {}, outName(it)), it.sample ? h('span', { class: 'tag' }, '範例') : null, h('div', { class: 'hint' }, it.err ? it.err : `原始 ${it.w} × ${it.h} px，輸出 ${it.W} × ${it.H} px，${fmtSize(it.bytes.length)}`)),
         h('button', { class: 'btn sm' + (it.mode === 'svg' ? '' : ' on'), 'aria-pressed': it.mode !== 'svg', onclick: () => { it.mode = 'png'; draw(); } }, 'PNG 輸出'),
         h('button', { class: 'btn sm' + (it.mode === 'svg' ? ' on' : ''), 'aria-pressed': it.mode === 'svg', onclick: () => { it.mode = 'svg'; draw(); } }, '原始 SVG'),
-        h('button', { class: 'btn sm pri', disabled: !!it.err, onclick: async () => { try { setStatus(status, 'ok', await saveFile(outName(it), it.bytes)); } catch (e) { setStatus(status, 'err', e.message); } } }, '下載'),
+        h('button', { class: 'btn sm pri', disabled: !!it.err, onclick: () => saveOne(it) }, '下載 PNG'),
         h('button', { class: 'btn sm', 'aria-label': '移除 ' + it.name, onclick: () => { items.splice(items.indexOf(it), 1); draw(); } }, '移除')),
       it.err ? null : h('div', { class: 'pv' + (st.bg === 'transparent' ? ' chk' : '') }, h('img', { src: it.mode === 'svg' ? it.svgUrl : it.url, alt: it.name, title: '點一下放大檢視', style: 'cursor:zoom-in', onclick: () => it.mode === 'svg' ? openViewer(it.svgUrl, it.name + '.svg', true) : viewBytes(outName(it), it.bytes) })))));
     if (!items.length) cards.append(h('p', { class: 'hint' }, '尚未加入 SVG。'));
+    const n = okItems().length; mainBtn.textContent = n > 1 ? `打包下載 ZIP（${n} 個）` : '下載 PNG'; eachBtn.hidden = n < 2;
   };
   const renderItem = async it => { try { const st = settings(), f = fixSvg(it.raw, st.font), r = await svgToPng(f, st); if (it.url) URL.revokeObjectURL(it.url); Object.assign(it, { w: f.w, h: f.h, ...r, url: URL.createObjectURL(new Blob([r.bytes], { type: 'image/png' })), err: null }); } catch (e) { it.err = e.message; } };
   const addRaw = async (name, raw, sample) => { if (!sample) for (let i = items.length - 1; i >= 0; i--) if (items[i].sample) items.splice(i, 1); const it = { name: stem(name), raw, mode: 'png', sample }; items.unshift(it); await renderItem(it); };
@@ -683,7 +696,7 @@ tool({ id: 'svg', group: '圖片', title: 'SVG 轉 PNG', desc: '把 SVG 轉成�
       cards),
     h('div', { class: 'side' },
       h('div', { class: 'panel' }, h('h2', {}, '輸出設定'), opt,
-        h('div', { class: 'row' }, h('button', { class: 'btn pri', onclick: async () => { const ok = items.filter(i => !i.err); if (!ok.length) return setStatus(status, 'err', '沒有可下載的 PNG。'); try { setStatus(status, 'ok', await saveFile(`svg-png-${val(opt, 'scale')}x.zip`, await zipOf(ok.map(i => ({ name: outName(i), bytes: i.bytes }))))); } catch (e) { setStatus(status, 'err', e.message); } } }, '全部打包下載 ZIP'),
+        h('div', { class: 'row' }, mainBtn, eachBtn,
           h('button', { class: 'btn', onclick: () => { items.length = 0; draw(); } }, '清空')), status))));
   syncLive();
   addRaw('範例流程圖.svg', DEMO_SVG, true).then(draw);
