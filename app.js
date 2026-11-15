@@ -80,13 +80,20 @@ async function saveFile(name, bytes) {
   setTimeout(() => URL.revokeObjectURL(a.href), 30000);
   return '已下載 ' + name;
 }
-async function zipOf(outs) { const z = new JSZip(); for (const o of outs) z.file(o.name, o.bytes); return z.generateAsync({ type: 'blob' }); }
+const cleanName = v => String(v || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '').trim().slice(0, 120);
+async function zipOf(outs) { const z = new JSZip(), seen = new Map(); for (const o of outs) { let n = o.name; const k = seen.get(n) || 0; seen.set(o.name, k + 1); if (k) n = n.replace(/(\.[^.]+)?$/, `-${k + 1}$1`); z.file(n, o.bytes); } return z.generateAsync({ type: 'blob' }); }
+// 可編輯的檔名欄：主檔名可改，副檔名固定
+function nameField(full, onChange) {
+  const m = full.match(/^(.*?)(\.[^.]+)?$/), ext = m[2] || '';
+  const i = h('input', { type: 'text', class: 'nameinp', value: m[1], id: uid(), 'aria-label': '輸出檔名', title: '可修改輸出檔名', oninput: () => onChange((cleanName(i.value) || m[1]) + ext) });
+  return h('span', { class: 'namerow' }, i, h('span', { class: 'ext' }, ext));
+}
 function setStatus(el, kind, msg) { el.className = 'status ' + kind; el.textContent = msg; }
 function showResults(box, outs, zipName, status) {
   box.replaceChildren();
   const dl = async (name, data) => { try { setStatus(status, 'ok', await saveFile(name, data)); } catch (e) { setStatus(status, 'err', e.message); } };
-  if (outs.length > 1) box.append(h('li', {}, h('span', { class: 'nm' }, `全部 ${outs.length} 個檔案`), h('button', { class: 'btn sm pri', onclick: async () => dl(zipName, await zipOf(outs)) }, '下載 ZIP')));
-  for (const o of outs.slice(0, 200)) box.append(h('li', {}, h('span', { class: 'nm' }, o.name, o.note ? h('div', { class: 'hint' }, o.note) : null), h('span', { class: 'num' }, fmtSize(o.bytes.length)), isPreviewable(o.name) ? h('button', { class: 'btn sm', onclick: () => viewBytes(o.name, o.bytes) }, '預覽') : null, h('button', { class: 'btn sm', onclick: () => dl(o.name, o.bytes) }, '下載')));
+  if (outs.length > 1) box.append(h('li', {}, h('span', { class: 'nm' }, nameField(zipName, v => zipName = v), h('div', { class: 'hint' }, `全部 ${outs.length} 個檔案`)), h('button', { class: 'btn sm pri', onclick: async () => dl(zipName, await zipOf(outs)) }, '下載 ZIP')));
+  for (const o of outs.slice(0, 200)) box.append(h('li', {}, h('span', { class: 'nm' }, nameField(o.name, v => o.name = v), o.note ? h('div', { class: 'hint' }, o.note) : null), h('span', { class: 'num' }, fmtSize(o.bytes.length)), isPreviewable(o.name) ? h('button', { class: 'btn sm', onclick: () => viewBytes(o.name, o.bytes) }, '預覽') : null, h('button', { class: 'btn sm', onclick: () => dl(o.name, o.bytes) }, '下載')));
 }
 function dropzone(label, types, onFiles, multiple = true) {
   const input = h('input', { type: 'file', accept: types, multiple, hidden: true, id: uid(), onchange: async () => { await onFiles(await readFiles(input.files)); input.value = ''; } });
@@ -271,7 +278,10 @@ tool({ id: 'organize', group: 'PDF', title: '分割、合併 PDF', desc: '加入
       return li;
     }));
     fileHint.hidden = ids.length < 2;
+    if (!outName.dataset.edited) outName.value = ids.length ? stem(files.get(ids[0]).name) : '';
   };
+  const outName = inp('outname', 'text', '', { placeholder: '輸出檔名', oninput: () => { outName.dataset.edited = outName.value ? '1' : ''; } });
+  const outBase = () => cleanName(outName.value) || 'document';
   const fileHint = h('p', { class: 'hint', hidden: true }, '拖曳檔案列可調整 PDF 的先後順序，該檔的所有頁面會一起移動。');
   const draw = () => {
     drawFiles();
@@ -324,7 +334,7 @@ tool({ id: 'organize', group: 'PDF', title: '分割、合併 PDF', desc: '加入
   const guard = fn => async () => { try { setStatus(status, 'busy', '處理中…'); await fn(); } catch (e) { console.error(e); setStatus(status, 'err', '處理失敗：' + e.message); } };
   const need = sel => { const l = sel ? pages.filter(p => p.sel) : pages; if (!l.length) throw new Error(sel ? '請先點選要輸出的頁面。' : '請至少保留一頁作輸出。'); return l; };
   const done = (outs, zip) => { showResults(results, outs, zip, status); setStatus(status, 'ok', `已完成，${outs.length} 個檔案可下載。`); };
-  const toImages = async (list, type) => { const outs = []; for (const [i, p] of list.entries()) { let c; if (p.blank) { c = h('canvas'); c.width = Math.round(p.w * 2); c.height = Math.round(p.h * 2); const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); } else c = await renderCanvas(files.get(p.file).pj, p.idx + 1, { scale: 2, rot: p.rot }); outs.push({ name: `page-${String(i + 1).padStart(3, '0')}.${type}`, bytes: await canvasBytes(c, type === 'jpg' ? 'image/jpeg' : 'image/png', .92) }); } return outs; };
+  const toImages = async (list, type) => { const outs = []; for (const [i, p] of list.entries()) { let c; if (p.blank) { c = h('canvas'); c.width = Math.round(p.w * 2); c.height = Math.round(p.h * 2); const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); } else c = await renderCanvas(files.get(p.file).pj, p.idx + 1, { scale: 2, rot: p.rot }); outs.push({ name: `${outBase()}-${String(i + 1).padStart(3, '0')}.${type}`, bytes: await canvasBytes(c, type === 'jpg' ? 'image/jpeg' : 'image/png', .92) }); } return outs; };
   const bulk = fn => () => { const l = pages.filter(p => p.sel); if (!l.length) return setStatus(status, 'err', '請先點選頁面。'); fn(l); draw(); };
   const zone = dropzone('加入 PDF、JPG 或 PNG', '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png', add);
   attachDrop(grid, add);
@@ -338,15 +348,15 @@ tool({ id: 'organize', group: 'PDF', title: '分割、合併 PDF', desc: '加入
         h('button', { class: 'btn sm', onclick: () => { pages = []; files.clear(); draw(); } }, '清除全部'), count, h('span', { style: 'flex:1' }), h('label', { class: 'hint', for: thumb.id, style: 'margin:0' }, '縮圖大小'), thumb),
       grid),
     h('div', { class: 'side' },
-      h('div', { class: 'panel' }, h('h2', {}, '輸出設定'), field('頁面尺寸', optUnify), optStrip,
+      h('div', { class: 'panel' }, h('h2', {}, '輸出設定'), field('輸出檔名（不含副檔名）', outName), field('頁面尺寸', optUnify), optStrip,
         h('div', { class: 'row' },
-          h('button', { class: 'btn pri', onclick: guard(async () => done([{ name: 'organized.pdf', bytes: await build(need(false), opts()) }])) }, '合併輸出 PDF'),
-          h('button', { class: 'btn', onclick: guard(async () => { const l = need(false), outs = []; for (const [i, p] of l.entries()) outs.push({ name: `page-${String(i + 1).padStart(3, '0')}.pdf`, bytes: await build([p], opts()) }); done(outs, 'split-pages.zip'); }) }, '每頁拆成一個 PDF')),
+          h('button', { class: 'btn pri', onclick: guard(async () => done([{ name: outBase() + '.pdf', bytes: await build(need(false), opts()) }])) }, '合併輸出 PDF'),
+          h('button', { class: 'btn', onclick: guard(async () => { const l = need(false), outs = []; for (const [i, p] of l.entries()) outs.push({ name: `${outBase()}-${String(i + 1).padStart(3, '0')}.pdf`, bytes: await build([p], opts()) }); done(outs, outBase() + '-pages.zip'); }) }, '每頁拆成一個 PDF')),
         h('h2', { style: 'margin-top:14px' }, '已選頁面'),
         h('div', { class: 'row' },
-          h('button', { class: 'btn', onclick: guard(async () => done([{ name: 'selected-pages.pdf', bytes: await build(need(true), opts()) }])) }, '匯出 PDF'),
-          h('button', { class: 'btn', onclick: guard(async () => done(await toImages(need(true), 'jpg'), 'selected-pages-jpg.zip')) }, '匯出 JPG'),
-          h('button', { class: 'btn', onclick: guard(async () => done(await toImages(need(true), 'png'), 'selected-pages-png.zip')) }, '匯出 PNG')),
+          h('button', { class: 'btn', onclick: guard(async () => done([{ name: outBase() + '.pdf', bytes: await build(need(true), opts()) }])) }, '匯出 PDF'),
+          h('button', { class: 'btn', onclick: guard(async () => done(await toImages(need(true), 'jpg'), outBase() + '-jpg.zip')) }, '匯出 JPG'),
+          h('button', { class: 'btn', onclick: guard(async () => done(await toImages(need(true), 'png'), outBase() + '-png.zip')) }, '匯出 PNG')),
         status),
       h('div', { class: 'panel' }, h('h2', {}, '輸出'), results, h('p', { class: 'hint' }, '點縮圖可選取頁面，拖曳可調整順序，按 ⤢ 或連點兩下可放大檢視。')))));
   sampleDoc().then(bytes => add([{ id: uid(), name: '範例文件.pdf', bytes, type: 'application/pdf' }])).catch(console.warn);
@@ -433,14 +443,14 @@ batchTool({ id: 'compress', group: '壓縮與轉換', title: '壓縮 PDF 與圖�
     if (isPdf(f)) {
       let best;
       for (const [i, [q, m]] of steps.entries()) { if (customMode) say(`嘗試第 ${i + 1}/${steps.length} 級`); const res = await compressPdf(f.bytes, q, m); if (!best || res.bytes.length < best.bytes.length) best = res; if (!customMode || res.bytes.length <= target) break; }
-      if (best.bytes.length >= f.bytes.length) return [{ name: stem(f.name) + '-compressed.pdf', bytes: f.bytes, note: '這份檔案已無法再縮小，輸出與原檔相同。' }];
-      return [{ name: stem(f.name) + '-compressed.pdf', bytes: best.bytes, note: report(best.bytes, best.skippedCmyk ? `；${best.skippedCmyk} 張 CMYK 圖片保持原樣` : '') }];
+      if (best.bytes.length >= f.bytes.length) return [{ name: stem(f.name) + '.pdf', bytes: f.bytes, note: '這份檔案已無法再縮小，輸出與原檔相同。' }];
+      return [{ name: stem(f.name) + '.pdf', bytes: best.bytes, note: report(best.bytes, best.skippedCmyk ? `；${best.skippedCmyk} 張 CMYK 圖片保持原樣` : '') }];
     }
     const bmp = await decodeImage(f), fmt = val(o, 'ifmt'), type = fmt === 'auto' ? (isJpg(f) ? 'image/jpeg' : 'image/webp') : MIME[fmt], maxSide = +val(o, 'iside'); let best;
     for (const [i, [q]] of steps.entries()) { if (customMode) say(`嘗試第 ${i + 1}/${steps.length} 級`); const res = await encodeImage(bmp, { type, q, maxSide }); if (!best || res.bytes.length < best.bytes.length) best = res; if (!customMode || res.bytes.length <= target) break; }
     bmp.close?.();
     if (best.bytes.length >= f.bytes.length && !maxSide) return [{ name: f.name, bytes: f.bytes, note: '這張圖已無法再縮小，輸出與原檔相同。' }];
-    return [{ name: `${stem(f.name)}-compressed.${best.ext}`, bytes: best.bytes, note: report(best.bytes, `，${best.w} × ${best.h} px` + (best.fellBack ? '；這個瀏覽器不支援輸出 WebP，已改存 PNG' : '')) }];
+    return [{ name: `${stem(f.name)}.${best.ext}`, bytes: best.bytes, note: report(best.bytes, `，${best.w} × ${best.h} px` + (best.fellBack ? '；這個瀏覽器不支援輸出 WebP，已改存 PNG' : '')) }];
   } });
 
 /* ═════════ 3. 格式轉換（PDF 轉圖片、圖片互轉） ═════════ */
@@ -497,7 +507,7 @@ batchTool({ id: 'watermark', group: 'PDF', title: '浮水印', desc: '在每一�
       const [cx, cy] = anchor(val(o, 'pos'), v.vw, v.vh, w, hh, 24);
       placeImage(p, img, { cx, cy, w, h: hh, angle, opacity });
     }
-    return [{ name: stem(f.name) + '-watermarked.pdf', bytes: await doc.save() }];
+    return [{ name: stem(f.name) + '.pdf', bytes: await doc.save() }];
   } });
 
 /* ═════════ PDF 轉灰階 ═════════ */
@@ -510,7 +520,7 @@ batchTool({ id: 'gray', group: 'PDF', title: 'PDF 轉灰階', desc: '把彩色 P
     o.append(field('轉換方式', mode), dpi, field('頁面範圍', inp('range', 'text', '', { placeholder: '留空代表全部頁面，例如 1-3, 5' })), note);
   },
   async run(f, o, say) {
-    const src = await openLib(f.bytes), n = src.getPageCount(), idx = parseRange(val(o, 'range'), n), name = stem(f.name) + '-gray.pdf';
+    const src = await openLib(f.bytes), n = src.getPageCount(), idx = parseRange(val(o, 'range'), n), name = stem(f.name) + '.pdf';
     if (!idx.length) throw new Error('頁面範圍內沒有任何頁面。');
     if (val(o, 'mode') === 'overlay') {
       const pages = src.getPages();
@@ -646,7 +656,7 @@ tool({ id: 'svg', group: '圖片', title: 'SVG 轉 PNG', desc: '把 SVG 轉成�
     h('p', { class: 'hint' }, '字型取自這台電腦已安裝的字型（如微軟正黑體、蘋方）。SVG 內引用的外部圖片或網路字型不會載入。'));
   bgSel.style.flex = '1';
   const settings = () => ({ scale: +val(opt, 'scale'), pad: +val(opt, 'pad'), bg: val(opt, 'bg') === 'custom' ? custom.value : val(opt, 'bg'), font: val(opt, 'font') });
-  const outName = it => `${it.name}_${val(opt, 'scale')}x.png`;
+  const outName = it => `${cleanName(it.out) || it.name}.png`;
   const okItems = () => items.filter(i => !i.err);
   const saveOne = async it => { try { setStatus(status, 'ok', await saveFile(outName(it), it.bytes)); return true; } catch (e) { setStatus(status, 'err', e.message); return false; } };
   const mainBtn = h('button', { class: 'btn pri', onclick: async () => {
@@ -662,7 +672,7 @@ tool({ id: 'svg', group: '圖片', title: 'SVG 轉 PNG', desc: '把 SVG 轉成�
   const draw = () => {
     const st = settings();
     cards.replaceChildren(...items.map(it => h('div', { class: 'card' },
-      h('div', { class: 'cardhead' }, h('div', { class: 'nm' }, h('b', {}, outName(it)), it.sample ? h('span', { class: 'tag' }, '範例') : null, h('div', { class: 'hint' }, it.err ? it.err : `原始 ${it.w} × ${it.h} px，輸出 ${it.W} × ${it.H} px，${fmtSize(it.bytes.length)}`)),
+      h('div', { class: 'cardhead' }, h('div', { class: 'nm' }, nameField(outName(it), v => it.out = v.replace(/\.png$/, '')), it.sample ? h('span', { class: 'tag' }, '範例') : null, h('div', { class: 'hint' }, it.err ? it.err : `原始 ${it.w} × ${it.h} px，輸出 ${it.W} × ${it.H} px，${fmtSize(it.bytes.length)}`)),
         h('button', { class: 'btn sm' + (it.mode === 'svg' ? '' : ' on'), 'aria-pressed': it.mode !== 'svg', onclick: () => { it.mode = 'png'; draw(); } }, 'PNG 輸出'),
         h('button', { class: 'btn sm' + (it.mode === 'svg' ? ' on' : ''), 'aria-pressed': it.mode === 'svg', onclick: () => { it.mode = 'svg'; draw(); } }, '原始 SVG'),
         h('button', { class: 'btn sm pri', disabled: !!it.err, onclick: () => saveOne(it) }, '下載 PNG'),
