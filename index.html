@@ -4,6 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>頁匠工具箱</title>
+<meta name="description" content="免費、免註冊的 PDF 與圖片工具：分割合併 PDF、浮水印、轉灰階、壓縮、格式轉換、去背景、圖片標註與 SVG 轉 PNG。所有檔案只在你的瀏覽器裡處理，不會上傳。">
+<meta name="theme-color" content="#1f47c8">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="頁匠工具箱">
+<meta property="og:description" content="免費、免註冊的 PDF 與圖片工具，檔案只在你的瀏覽器裡處理，不會上傳。">
+<meta property="og:url" content="https://shiaw87.github.io/tool/">
+<meta property="og:image" content="https://shiaw87.github.io/tool/og.png">
+<meta property="og:locale" content="zh_TW">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@400;700&display=swap" rel="stylesheet">
 <style>
@@ -91,6 +101,8 @@ h1{font:700 22px var(--font-display);margin:0 0 2px;text-wrap:balance}
 .pg{background:var(--surface);border:1.5px solid var(--line);border-radius:8px;padding:6px;display:flex;flex-direction:column;gap:4px;cursor:pointer;user-select:none}
 .pg.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
 .pg.dragover{border-style:dashed;border-color:var(--accent)}
+.pg.dragging,.filebar li.dragging{opacity:.55;outline:2px solid var(--accent)}
+.pg{-webkit-touch-callout:none}
 .pg .th{height:calc(var(--thumb,150px) * 1.2);display:flex;align-items:center;justify-content:center;background:var(--sunken);border-radius:5px;overflow:hidden}
 .pg canvas,.pg .blank{max-width:100%;max-height:calc(var(--thumb,150px) * 1.2 - 10px);background:#fff;box-shadow:0 0 0 1px var(--line);transition:transform .15s}
 .pg .blank{width:96px;height:136px}
@@ -115,8 +127,18 @@ body.navc .top{padding:0;justify-content:center}body.navc .top #navtoggle{margin
 .vttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.vpct{min-width:48px;text-align:center}
 .vpane{flex:1;overflow:auto;padding:16px;cursor:grab;display:grid;place-items:safe center;touch-action:none}
 .vpane.grab{cursor:grabbing}
-.vpane img{display:block;max-width:none;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.5);user-select:none;-webkit-user-drag:none}
-.vpane.chk img{background:repeating-conic-gradient(#d5d8e0 0 25%,#fff 0 50%) 0 0/20px 20px}
+.vwrap{position:relative;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.5);user-select:none;line-height:0}
+.vwrap.chk{background:repeating-conic-gradient(#d5d8e0 0 25%,#fff 0 50%) 0 0/20px 20px}
+.vwrap img{display:block;width:100%;max-width:none;-webkit-user-drag:none;pointer-events:none}
+.vclip,.vknob,.vlab{display:none}
+.vwrap.cmp .vclip{display:block;position:absolute;inset:0;background:inherit}
+.vwrap.cmp .vclip img{height:100%}
+.vwrap.cmp .vknob{display:block;position:absolute;top:0;bottom:0;width:28px;margin-left:-14px;cursor:ew-resize;touch-action:none}
+.vknob::before{content:"";position:absolute;left:13px;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.55)}
+.vknob::after{content:"⇆";position:absolute;left:0;top:50%;width:28px;height:28px;margin-top:-14px;border-radius:50%;background:#fff;color:#161b26;box-shadow:0 0 0 1px rgba(0,0,0,.55);font:14px/28px sans-serif;text-align:center}
+.vknob:focus-visible{outline:2px solid #8fa8ff}
+.vwrap.cmp .vlab{display:block;position:absolute;top:8px;padding:2px 8px;border-radius:99px;background:rgba(10,12,18,.78);color:#fff;font:12px/1.6 var(--font-body);pointer-events:none;white-space:nowrap}
+.vla{left:8px}.vlb{right:8px}
 .rmbox{padding:12px;border:1px solid var(--line);border-radius:10px}
 .rmcv{max-width:100%;max-height:70vh;display:block;margin:0 auto;cursor:crosshair}
 main.full{padding:0;overflow:hidden}
@@ -156,8 +178,6 @@ main.full{padding:0;overflow:hidden}
   <div class="note">檔案只在這個瀏覽器分頁內處理，不會上傳。</div>
 </aside>
 <main id="main"></main>
-<script src="./vendor/pdf-lib.min.js"></script>
-<script src="./vendor/jszip.min.js"></script>
 <script type="module" src="./app.js"></script>
 </body>
 </html>
